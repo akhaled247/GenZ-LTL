@@ -151,12 +151,38 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
         return obs, info
 
     def pre_process_obs(self, reach, avoid):
+        if "SAR" in self.env.spec.id:
+            self.pre_process_obs_sar(reach, avoid)
         if "PointLtlSafety" in self.env.spec.id:
             obs = self.pre_process_obs_zones(reach, avoid)
         elif "LetterSafetyEnv" in self.env.spec.id:
             obs = self.pre_process_obs_letter(reach, avoid)
         return obs
 
+    def pre_process_obs_sar(self,
+                            reach: frozenset[FrozenAssignment], 
+                            avoid: frozenset[FrozenAssignment]) -> np.ndarray:
+            """
+            observation reduction
+            """
+            original_obs = self.env.unwrapped.task.original_obs['agent_0']
+            lidar_dim = self.task.lidar_conf.num_bins
+            agent_obs = np.concatenate([original_obs[key] for key in self.agent_obs_keys])
+
+            reach_zones = [r.to_string().split('_')[0]+"_casualtys_lidar" for r in list(reach)]
+            avoid_zones = [a.to_string().split('_')[0]+"_casualtys_lidar" for a in list(avoid)]
+
+            reach_obs = np.vstack([original_obs[category] for category in reach_zones])
+            reach_obs = np.max(reach_obs, axis=0) # lidar_dim
+            if len(avoid_zones):
+                avoid_obs = np.vstack([original_obs[category] for category in avoid_zones])
+                avoid_obs = np.max(avoid_obs, axis=0) # lidar_dim
+            else:
+                avoid_obs = np.zeros(lidar_dim)
+                
+            assert agent_obs.shape == reach_obs.shape == avoid_obs.shape == (lidar_dim,)
+            return np.concatenate([agent_obs, reach_obs, avoid_obs])
+    
     def pre_process_obs_zones(self,
                         reach: frozenset[FrozenAssignment], 
                         avoid: frozenset[FrozenAssignment]) -> np.ndarray:

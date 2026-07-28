@@ -4,6 +4,7 @@ import gymnasium
 from gymnasium.wrappers import FlattenObservation, TimeLimit
 
 from envs.remove_trunc_wrapper import RemoveTruncWrapper
+from specbench.envs.zones.zone_env import make_zone_env
 
 
 def get_env_attr(env, attr: str):
@@ -34,6 +35,8 @@ def make_env(
         impossible_assignments = get_env_attr(underlying_env, 'get_impossible_assignments')()
         env = PretrainingEnv(propositions, impossible_assignments)
         max_steps = max_steps or 100
+    elif is_sar_env(name):
+        env = make_zone_env(name, flat=True)  # single-agent: PointLTL0MASAR1-v0
     elif is_safety_gym_env(name):
         env = make_safety_gym_env(name, render_mode)
         max_steps = max_steps or 1000
@@ -106,6 +109,8 @@ def make_env_safety(
 def is_safety_gym_env(name: str) -> bool:
     return any([name.startswith(agent_name) for agent_name in ['Point', 'Car', 'Racecar', 'Doggo', 'Ant']])
 
+def is_sar_env(name: str) -> bool:
+    return 'SAR' in name
 
 def make_safety_gym_env(name: str, render_mode: str | None = None):
     # noinspection PyUnresolvedReferences

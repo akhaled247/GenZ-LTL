@@ -11,6 +11,8 @@ model_configs = {
     'LetterEnv-v0': letter,
     'LetterSafetyEnv-v0': letter_safety,
     'FlatWorld-v0': flatworld,
+    'PointLTL0MASAR1-v0': zones,
+    'PointLTL0MASAR1WC-v0': zones_safety,
 }
 
 __all__ = ['ExperimentConfig', 'PPOConfig', 'RCOConfig', 'ModelConfig', 'ModelSafetyConfig', 'SetNetConfig', 'model_configs']
