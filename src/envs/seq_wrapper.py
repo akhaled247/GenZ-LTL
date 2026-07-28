@@ -152,7 +152,7 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
 
     def pre_process_obs(self, reach, avoid):
         if "SAR" in self.env.spec.id:
-            self.pre_process_obs_sar(reach, avoid)
+            obs = self.pre_process_obs_sar(reach, avoid)
         if "PointLtlSafety" in self.env.spec.id:
             obs = self.pre_process_obs_zones(reach, avoid)
         elif "LetterSafetyEnv" in self.env.spec.id:
@@ -166,11 +166,12 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
             observation reduction
             """
             original_obs = self.env.unwrapped.task.original_obs['agent_0']
-            lidar_dim = self.task.lidar_conf.num_bins
+            lidar_dim = self.env.unwrapped.task.lidar_conf.num_bins
             agent_obs = np.concatenate([original_obs[key] for key in self.agent_obs_keys])
 
-            reach_zones = [r.to_string().split('_')[0]+"_casualtys_lidar" for r in list(reach)]
-            avoid_zones = [a.to_string().split('_')[0]+"_casualtys_lidar" for a in list(avoid)]
+            
+            reach_zones = [r.to_string()[0].split('_')[0]+"_casualtys_lidar_"+r.to_string()[0].split('_')[-1] for r in list(reach)]
+            avoid_zones = [a.to_string()[0].split('_')[0]+"_casualtys_lidar_"+a.to_string()[0].split('_')[-1] for a in list(avoid)]
 
             reach_obs = np.vstack([original_obs[category] for category in reach_zones])
             reach_obs = np.max(reach_obs, axis=0) # lidar_dim

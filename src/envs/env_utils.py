@@ -116,7 +116,9 @@ def make_safety_gym_env(name: str, render_mode: str | None = None):
     # noinspection PyUnresolvedReferences
     import safety_gymnasium
     from envs.zones.safety_gym_wrapper import SafetyGymWrapper
-
+    if "SAR" in name: 
+        from specbench.envs.zones.zone_env import make_zone_env 
+        return make_zone_env(name, flat=True)
     env = safety_gymnasium.make(name, render_mode=render_mode)
     env = SafetyGymWrapper(env)
     env = FlattenObservation(env)
