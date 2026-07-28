@@ -1,4 +1,4 @@
-
+ 
 <h1 align="center">
 <br>
 One Subgoal at a Time: Zero-Shot Generalization to Arbitrary Linear Temporal Logic Requirements in Multi-Task Reinforcement Learning
