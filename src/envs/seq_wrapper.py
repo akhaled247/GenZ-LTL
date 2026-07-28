@@ -92,6 +92,18 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
 
     def __init__(self, env: gymnasium.Env, sample_sequence: Callable[[], LDBASequence], partial_reward=False):
         super().__init__(env)
+        if "SAR" in env.spec.id:
+            lidar_dim = env.unwrapped.task.lidar_conf.num_bins
+            agent_dim = sum(
+                int(np.prod(env.observation_space[k].shape))
+                for k in self.agent_obs_keys
+                if k in env.observation_space.spaces  # if still Dict before flatten
+            )
+            # If env is already flat Dict from make_zone_env(flat=True), derive from a dry probe instead (below).
+            feat_dim = agent_dim + 2 * lidar_dim
+            self.observation_space = spaces.Dict({
+                "features": spaces.Box(-np.inf, np.inf, (feat_dim,), dtype=np.float32),
+            })
         if "PointLtlSafety" in env.spec.id:
             self.observation_space = spaces.Dict({
                 # 16 dim for agent status, 16 dim for reach, and 16 dim for avoid
@@ -159,30 +171,29 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
             obs = self.pre_process_obs_letter(reach, avoid)
         return obs
 
-    def pre_process_obs_sar(self,
-                            reach: frozenset[FrozenAssignment], 
-                            avoid: frozenset[FrozenAssignment]) -> np.ndarray:
-            """
-            observation reduction
-            """
-            original_obs = self.env.unwrapped.task.original_obs['agent_0']
-            lidar_dim = self.env.unwrapped.task.lidar_conf.num_bins
-            agent_obs = np.concatenate([original_obs[key] for key in self.agent_obs_keys])
-
-            
-            reach_zones = [r.to_string()[0].split('_')[0]+"_casualtys_lidar_"+r.to_string()[0].split('_')[-1] for r in list(reach)]
-            avoid_zones = [a.to_string()[0].split('_')[0]+"_casualtys_lidar_"+a.to_string()[0].split('_')[-1] for a in list(avoid)]
-
-            reach_obs = np.vstack([original_obs[category] for category in reach_zones])
-            reach_obs = np.max(reach_obs, axis=0) # lidar_dim
-            if len(avoid_zones):
-                avoid_obs = np.vstack([original_obs[category] for category in avoid_zones])
-                avoid_obs = np.max(avoid_obs, axis=0) # lidar_dim
-            else:
-                avoid_obs = np.zeros(lidar_dim)
-                
-            assert agent_obs.shape == reach_obs.shape == avoid_obs.shape == (lidar_dim,)
-            return np.concatenate([agent_obs, reach_obs, avoid_obs])
+    def _casualty_lidar_key(self, prop: str) -> str:
+      # "surface_0" -> "surface_casualtys_lidar_0"
+      category, idx = prop.rsplit("_", 1)
+      return f"{category}_casualtys_lidar_{idx}"
+    
+    def pre_process_obs_sar(self, reach, avoid):
+        original_obs = self._sar_agent_obs(0)
+        lidar_dim = self._sar_task().lidar_conf.num_bins
+        agent_obs = np.concatenate(
+            [original_obs[k].flatten() if original_obs[k].ndim > 1 else original_obs[k]
+            for k in self.agent_obs_keys]
+        )
+        def lidar_for_assignments(assignments):
+            keys = []
+            for a in assignments:
+                for prop in a.to_string():  # list[str], e.g. ["surface_0"]
+                    keys.append(self._casualty_lidar_key(prop))
+            if not keys:
+                return np.zeros(lidar_dim)
+            return np.max(np.vstack([original_obs[k] for k in keys]), axis=0)
+        reach_obs = lidar_for_assignments(reach)
+        avoid_obs = lidar_for_assignments(avoid)
+        return np.concatenate([agent_obs, reach_obs, avoid_obs])
     
     def pre_process_obs_zones(self,
                         reach: frozenset[FrozenAssignment], 
