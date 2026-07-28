@@ -13,6 +13,4 @@ curriculum = Curriculum([EnumerateCurriculumStageZones(threshold=None, threshold
 sampler = CurriculumSampler.partial(curriculum)
 env = make_env_safety("PointLTL0MASAR1-v0", sampler, sequence=True)
 obs, info = env.reset(seed=0)
-print("propositions:", env.get_propositions())
-print("features:", obs["features"].shape)
 env.close()

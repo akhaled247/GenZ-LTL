@@ -92,19 +92,7 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
 
     def __init__(self, env: gymnasium.Env, sample_sequence: Callable[[], LDBASequence], partial_reward=False):
         super().__init__(env)
-        if "SAR" in env.spec.id:
-            lidar_dim = env.unwrapped.task.lidar_conf.num_bins
-            agent_dim = sum(
-                int(np.prod(env.observation_space[k].shape))
-                for k in self.agent_obs_keys
-                if k in env.observation_space.spaces  # if still Dict before flatten
-            )
-            # If env is already flat Dict from make_zone_env(flat=True), derive from a dry probe instead (below).
-            feat_dim = agent_dim + 2 * lidar_dim
-            self.observation_space = spaces.Dict({
-                "features": spaces.Box(-np.inf, np.inf, (feat_dim,), dtype=np.float32),
-            })
-        if "PointLtlSafety" in env.spec.id:
+        if "SAR" in env.spec.id or "PointLtlSafety" in env.spec.id:
             self.observation_space = spaces.Dict({
                 # 16 dim for agent status, 16 dim for reach, and 16 dim for avoid
                 'features': spaces.Box(-np.inf, np.inf, (48,), dtype=np.float32)
@@ -117,7 +105,13 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
         self.sample_sequence = sample_sequence
         self.goal_seq = None
         self.num_reached = 0 # always 0
-        self.agent_obs_keys = ["accelerometer", "velocimeter", "gyro", "magnetometer", "wall_sensor"] # from safety_gymnasium
+        if "SAR" in env.spec.id:
+            self.agent_obs_keys = [
+                "accelerometer_0", "velocimeter_0", "gyro_0",
+                "magnetometer_0", "wall_sensor_0",
+            ]
+        else:
+            self.agent_obs_keys = ["accelerometer", "velocimeter", "gyro", "magnetometer", "wall_sensor"] # from safety_gymnasium
         self.region_order = env.get_propositions()
         self.propositions = set(self.region_order)
 
@@ -171,29 +165,30 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
             obs = self.pre_process_obs_letter(reach, avoid)
         return obs
 
-    def _casualty_lidar_key(self, prop: str) -> str:
-      # "surface_0" -> "surface_casualtys_lidar_0"
+    def casualty_lidar_key(self, prop: str) -> str:
       category, idx = prop.rsplit("_", 1)
       return f"{category}_casualtys_lidar_{idx}"
-    
+    def lidar_for_assignments(self, original_obs, assignments, lidar_dim):
+        keys = []
+        for a in assignments:
+            for prop in a.to_string():  # list, e.g. ["surface_0"]
+                keys.append(self.casualty_lidar_key(prop))
+        if not keys:
+            return np.zeros(lidar_dim, dtype=np.float64)
+        return np.max(np.vstack([original_obs[k] for k in keys]), axis=0)
     def pre_process_obs_sar(self, reach, avoid):
-        original_obs = self._sar_agent_obs(0)
-        lidar_dim = self._sar_task().lidar_conf.num_bins
-        agent_obs = np.concatenate(
-            [original_obs[k].flatten() if original_obs[k].ndim > 1 else original_obs[k]
-            for k in self.agent_obs_keys]
-        )
-        def lidar_for_assignments(assignments):
-            keys = []
-            for a in assignments:
-                for prop in a.to_string():  # list[str], e.g. ["surface_0"]
-                    keys.append(self._casualty_lidar_key(prop))
-            if not keys:
-                return np.zeros(lidar_dim)
-            return np.max(np.vstack([original_obs[k] for k in keys]), axis=0)
-        reach_obs = lidar_for_assignments(reach)
-        avoid_obs = lidar_for_assignments(avoid)
-        return np.concatenate([agent_obs, reach_obs, avoid_obs])
+        original_obs = self.sar_agent_obs(0)
+        lidar_dim = self.sar_task().lidar_conf.num_bins
+        agent_obs = np.concatenate([
+            original_obs[k].flatten() if np.ndim(original_obs[k]) > 1 else original_obs[k]
+            for k in self.agent_obs_keys
+        ])
+        reach_obs = self.lidar_for_assignments(original_obs, reach, lidar_dim)
+        avoid_obs = self.lidar_for_assignments(original_obs, avoid, lidar_dim)
+        obs = np.concatenate([agent_obs, reach_obs, avoid_obs]).astype(np.float32)
+        assert obs.shape == self.observation_space["features"].shape
+        print("agent_obs", agent_obs.shape, "reach", reach_obs.shape, "avoid", avoid_obs.shape)
+        return obs
     
     def pre_process_obs_zones(self,
                         reach: frozenset[FrozenAssignment], 
@@ -250,4 +245,13 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
             'initial_goal': self.goal_seq,
             'propositions': info['propositions'],
         }
+
+    def sar_task(self):
+      return self.env.unwrapped.task
+    def sar_agent_obs(self, agent_idx: int = 0) -> dict:
+        original_obs = self.sar_task().original_obs
+        if original_obs is None:
+            raise RuntimeError("task.original_obs is None — reset inner env first")
+        agent_key = f"agent_{agent_idx}"
+        return original_obs[agent_key] if agent_key in original_obs else original_obs
 

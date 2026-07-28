@@ -36,7 +36,8 @@ def make_env(
         env = PretrainingEnv(propositions, impossible_assignments)
         max_steps = max_steps or 100
     elif is_sar_env(name):
-        env = make_zone_env(name, flat=True)  # single-agent: PointLTL0MASAR1-v0
+        from specbench.envs.zones.zone_env import make_zone_env 
+        env = make_zone_env(name, flat=True)
     elif is_safety_gym_env(name):
         env = make_safety_gym_env(name, render_mode)
         max_steps = max_steps or 1000
@@ -81,6 +82,9 @@ def make_env_safety(
         impossible_assignments = get_env_attr(underlying_env, 'get_impossible_assignments')()
         env = PretrainingEnv(propositions, impossible_assignments)
         max_steps = max_steps or 100
+    if "SAR" in name: 
+            from specbench.envs.zones.zone_env import make_zone_env 
+            return make_zone_env(name, flat=True)
     elif is_safety_gym_env(name):
         env = make_safety_gym_env(name, render_mode)
         max_steps = max_steps or 1000
@@ -104,8 +108,7 @@ def make_env_safety(
     env = TimeLimit(env, max_episode_steps=max_steps)
     env = RemoveTruncWrapper(env)
     return env
-
-
+    
 def is_safety_gym_env(name: str) -> bool:
     return any([name.startswith(agent_name) for agent_name in ['Point', 'Car', 'Racecar', 'Doggo', 'Ant']])
 
@@ -115,10 +118,11 @@ def is_sar_env(name: str) -> bool:
 def make_safety_gym_env(name: str, render_mode: str | None = None):
     # noinspection PyUnresolvedReferences
     import safety_gymnasium
+    if "SAR" in name:
+              import specbench  # noqa: F401
+              from specbench.envs.zones.zone_env import make_zone_env
+              return make_zone_env(name, flat=True)
     from envs.zones.safety_gym_wrapper import SafetyGymWrapper
-    if "SAR" in name: 
-        from specbench.envs.zones.zone_env import make_zone_env 
-        return make_zone_env(name, flat=True)
     env = safety_gymnasium.make(name, render_mode=render_mode)
     env = SafetyGymWrapper(env)
     env = FlattenObservation(env)
