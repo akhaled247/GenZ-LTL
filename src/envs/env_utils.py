@@ -108,6 +108,11 @@ def is_safety_gym_env(name: str) -> bool:
 
 
 def make_safety_gym_env(name: str, render_mode: str | None = None):
+    if "SAR" in name:
+        import specbench  # noqa: F401 — registers SAR env IDs
+        from specbench.envs.zones.zone_env import make_zone_env
+        return make_zone_env(name, render_mode=render_mode, flat=True)
+
     # noinspection PyUnresolvedReferences
     import safety_gymnasium
     from envs.zones.safety_gym_wrapper import SafetyGymWrapper

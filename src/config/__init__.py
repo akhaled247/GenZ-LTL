@@ -8,6 +8,8 @@ model_configs = {
     'PointLtlSafety3-v0': zones_safety,
     'PointLtlSafety4-v0': zones_safety,
     'PointLtlSafety5-v0': zones_safety,
+    'PointLTL0MASAR1-v0': zones,
+    'PointLTL0MASAR1WC-v0': zones_safety,
     'LetterEnv-v0': letter,
     'LetterSafetyEnv-v0': letter_safety,
     'FlatWorld-v0': flatworld,
