@@ -49,7 +49,6 @@ def make_env(
     propositions = get_env_attr(env, 'get_propositions')()
     sample_task = sampler(propositions)
     if not sequence:
-        # env = PartiallyOrderedWrapper(env, sample_task)
         env = LTLWrapper(env, sample_task)
         env = LDBAWrapper(env)
     else:
@@ -93,7 +92,6 @@ def make_env_safety(
     propositions = get_env_attr(env, 'get_propositions')()
     sample_task = sampler(propositions)
     if not sequence:
-        # env = PartiallyOrderedWrapper(env, sample_task)
         env = LTLWrapper(env, sample_task)
         env = LDBAWrapper(env)
     else:

@@ -21,6 +21,8 @@ def sar_task(env: gymnasium.Env):
 
 def sar_agent_obs(env: gymnasium.Env, agent_idx: int = 0) -> dict:
     original_obs = sar_task(env).original_obs
+    if original_obs is None:
+        raise RuntimeError("task.original_obs is None — reset inner env first")
     agent_key = f"agent_{agent_idx}"
     if isinstance(original_obs, dict) and agent_key in original_obs:
         return original_obs[agent_key]

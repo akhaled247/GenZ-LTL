@@ -344,3 +344,17 @@ FLATWORLD_CURRICULUM = Curriculum([
         threshold_type=None
     ),
 ])
+
+SAR_CURRICULUM = Curriculum([
+    ExplicitCurriculumStage(  # 0
+        task_fn=all_reach_tasks(1),
+        temperature=0.5,
+        threshold=0.8,
+        threshold_type='min',
+    ),
+])
+SAR_SAFETY_CURRICULUM = Curriculum([
+    EnumerateCurriculumStageZones(
+            threshold=0.99,
+            threshold_type='min'),
+])
