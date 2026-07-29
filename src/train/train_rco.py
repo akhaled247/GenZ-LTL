@@ -6,6 +6,7 @@ import simple_parsing
 import time
 import datetime
 
+import numpy as np
 import torch
 
 import config
@@ -75,7 +76,15 @@ class Trainer:
             start = time.time()
             exps, logs = algo.collect_experiences()
             curriculum = get_env_attr(envs[0], 'sample_sequence').curriculum
-            curriculum.update_task_success(logs['avg_goal_success'], verbose=True)
+            success_episodes = logs.get('success_per_episode', [])
+            episode_success_rate = (
+                float(np.mean(success_episodes)) if success_episodes else None
+            )
+            curriculum.update_task_success(
+                logs['avg_goal_success'],
+                episode_success_rate=episode_success_rate,
+                verbose=True,
+            )
             update_logs = algo.update_parameters(exps)
             logs.update(update_logs)
             update_time = time.time() - start

@@ -17,7 +17,7 @@ from sequence.samplers.sequence_samplers import sample_reach_avoid, all_reach_av
 @dataclass
 class CurriculumStage(ABC):
     threshold: float | None
-    threshold_type: Literal['mean', 'min'] | None
+    threshold_type: Literal['mean', 'min', 'success_rate'] | None
 
     @abstractmethod
     def sample(self, propositions: list[str], current=None) -> LDBASequence:
@@ -188,16 +188,37 @@ class Curriculum:
     def sample(self, propositions: list[str], current: str = None) -> LDBASequence:
         return self.current_stage.sample(propositions, current)
 
-    def update_task_success(self, task_success: dict[LDBASequence, float], verbose=False) -> None:
+    def update_task_success(
+        self,
+        task_success: dict[LDBASequence, float],
+        episode_success_rate: float | None = None,
+        verbose: bool = False,
+    ) -> None:
         if self.current_stage.threshold is None:
             return
-        if not task_success:
-            return
-        self.num_updates += 1
-        self.num_updates %= 100
-        self.current_stage.update_task_success(task_success)
-        aggr = np.mean if self.current_stage.threshold_type == 'mean' else np.min
-        if aggr(list(task_success.values())) >= self.current_stage.threshold:
+
+        if self.current_stage.threshold_type == 'success_rate':
+            if task_success:
+                self.num_updates += 1
+                self.num_updates %= 100
+                self.current_stage.update_task_success(task_success)
+            if episode_success_rate is None:
+                return
+            passed = episode_success_rate >= self.current_stage.threshold
+            metric_label = 'Pμ'
+            metric_value = episode_success_rate
+        else:
+            if not task_success:
+                return
+            self.num_updates += 1
+            self.num_updates %= 100
+            self.current_stage.update_task_success(task_success)
+            aggr = np.mean if self.current_stage.threshold_type == 'mean' else np.min
+            metric_value = aggr(list(task_success.values()))
+            passed = metric_value >= self.current_stage.threshold
+            metric_label = 'MEAN' if self.current_stage.threshold_type == 'mean' else 'MIN'
+
+        if passed:
             if verbose:
                 print('=' * 80)
                 print(f"Stage {self.stage_index} completed.")
@@ -206,7 +227,7 @@ class Curriculum:
         else:
             if verbose and self.num_updates % 100 == 0:
                 print(f"Stage {self.stage_index} not completed.")
-                print(f'MEAN: {np.mean(list(task_success.values()))}, THRESHOLD: {self.current_stage.threshold}')
+                print(f'{metric_label}: {metric_value}, THRESHOLD: {self.current_stage.threshold}')
 
 
 LETTER_CURRICULUM = Curriculum([
@@ -348,15 +369,23 @@ FLATWORLD_CURRICULUM = Curriculum([
 ])
 
 SAR_CURRICULUM = Curriculum([
-    ExplicitCurriculumStage(  # 0
+    ExplicitCurriculumStage(  # 0 — reach one prop; gate on full-episode Pμ
         task_fn=all_reach_tasks(1),
         temperature=0.5,
-        threshold=0.8,
-        threshold_type='min',
+        threshold=0.95,
+        threshold_type='success_rate',
+    ),
+    ExplicitCurriculumStage(  # 1 — reach both in sequence until num_steps
+        task_fn=all_reach_tasks(2),
+        temperature=0.5,
+        threshold=None,
+        threshold_type='mean',
     ),
 ])
+# Pμ for RCO is per subgoal segment in the log window, not full LTL sequence success.
 SAR_SAFETY_CURRICULUM = Curriculum([
     EnumerateCurriculumStageZones(
-            threshold=0.99,
-            threshold_type='min'),
+        threshold=0.95,
+        threshold_type='success_rate',
+    ),
 ])
