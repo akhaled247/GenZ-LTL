@@ -192,7 +192,7 @@ class Curriculum:
         if self.current_stage.threshold is None:
             return
         if not task_success:
-                    return
+            return
         self.num_updates += 1
         self.num_updates %= 100
         self.current_stage.update_task_success(task_success)
