@@ -15,5 +15,6 @@ class RemoveTruncWrapper(gymnasium.Wrapper):
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
-    ) -> tuple[WrapperObsType, dict[str, Any]]:
-        return super().reset(seed=seed, options=options)
+    ) -> WrapperObsType:
+        obs, _ = super().reset(seed=seed, options=options)
+        return obs

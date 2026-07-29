@@ -21,13 +21,13 @@ def main():
         sampler = CurriculumSampler.partial(curriculum)
         factory = make_env_safety if safety else make_env
         env = factory(env_id, sampler, sequence=True, max_steps=1000)
-        obs, info = env.reset(seed=0)
+        obs = env.reset(seed=0)
         assert obs["features"].shape == (48,), obs["features"].shape
         print(env_id)
         print("  propositions:", env.get_propositions())
         print("  features:", obs["features"].shape)
         print("  goal len:", len(obs["goal"]))
-        print("  reset props:", info["propositions"])
+        print("  reset props:", obs["propositions"])
         env.close()
 
 
