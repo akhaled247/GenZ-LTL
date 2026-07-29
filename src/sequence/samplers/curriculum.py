@@ -191,6 +191,8 @@ class Curriculum:
     def update_task_success(self, task_success: dict[LDBASequence, float], verbose=False) -> None:
         if self.current_stage.threshold is None:
             return
+        if not task_success:
+                    return
         self.num_updates += 1
         self.num_updates %= 100
         self.current_stage.update_task_success(task_success)

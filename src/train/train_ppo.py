@@ -112,6 +112,7 @@ class Trainer:
             sampler,
             sequence=True,
             sar_env_backend=self.args.experiment.sar_env_backend,
+            max_steps=2500
         )
 
     def async_factory_kwargs(self, curriculum_stage: int) -> dict:
@@ -121,7 +122,7 @@ class Trainer:
             "curriculum_name": self.args.curriculum,
             "curriculum_stage": curriculum_stage,
             "seed": self.args.experiment.seed,
-            "max_steps": None,
+            "max_steps": 2500,
             "sar_env_backend": self.args.experiment.sar_env_backend,
             "safety": False,
             "sequence": True,
