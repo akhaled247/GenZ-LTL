@@ -369,8 +369,4 @@ FLATWORLD_CURRICULUM = Curriculum([
 ])
 
 # Pμ for RCO is per subgoal segment in the log window, not full LTL sequence success.
-SAR_SAFETY_CURRICULUM = Curriculum([
-    EnumerateCurriculumStageZones(
-        threshold=0.99,
-        threshold_type='min'),
-])
+SAR_SAFETY_CURRICULUM = ZONES_SAFETY_CURRICULUM

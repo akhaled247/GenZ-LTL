@@ -22,6 +22,7 @@ def make_env(
         render_mode: str | None = None,
         sequence=False,
         sar_env_backend: str = "specrl",
+        flat: bool = True,
 ):
     from envs.pretraining.pretraining_env import PretrainingEnv
     from envs.seq_wrapper import SequenceWrapper
@@ -36,7 +37,7 @@ def make_env(
         env = PretrainingEnv(propositions, impossible_assignments)
         max_steps = max_steps or 100
     elif is_safety_gym_env(name):
-        env = make_safety_gym_env(name, render_mode, backend=sar_env_backend)
+        env = make_safety_gym_env(name, render_mode, backend=sar_env_backend, flat=flat)
         max_steps = max_steps or 1000
     elif name.startswith('Letter'):
         env = make_letter_env(name, render_mode)
@@ -66,6 +67,7 @@ def make_env_safety(
         render_mode: str | None = None,
         sequence=False,
         sar_env_backend: str = "specrl",
+        flat: bool = True,
 ):
     from envs.pretraining.pretraining_env import PretrainingEnv
     from envs.seq_wrapper import SequenceSafetyWrapper
@@ -80,7 +82,7 @@ def make_env_safety(
         env = PretrainingEnv(propositions, impossible_assignments)
         max_steps = max_steps or 100
     elif is_safety_gym_env(name):
-        env = make_safety_gym_env(name, render_mode, backend=sar_env_backend)
+        env = make_safety_gym_env(name, render_mode, backend=sar_env_backend, flat=flat)
         max_steps = max_steps or 1000
     elif name.startswith('Letter'):
         env = make_letter_env(name, render_mode)
@@ -105,6 +107,19 @@ def make_env_safety(
 
 def is_safety_gym_env(name: str) -> bool:
     return any([name.startswith(agent_name) for agent_name in ['Point', 'Car', 'Racecar', 'Doggo', 'Ant']])
+
+
+def is_sar_env(name: str) -> bool:
+    return "SAR" in name
+
+
+def is_safety_model_env(name: str) -> bool:
+    """True when eval/training should use RCO + SequenceSafetyWrapper stack."""
+    if name.startswith("PointLtlSafety") or name == "LetterSafetyEnv-v0":
+        return True
+    if is_sar_env(name) and ("WC" in name or "AC" in name):
+        return True
+    return False
 
 
 def make_safety_gym_env(
@@ -138,62 +153,4 @@ def make_flatworld_env(name: str):
     import envs.flatworld
 
     env = gymnasium.make(name)
-    return env
-
-
-def make_env_ma(
-        name: str,
-        sampler: Callable[[list[str]], Callable],
-        max_steps: Optional[int] = None,
-        render_mode: str | None = None,
-        sequence: bool = False,
-        sar_env_backend: str = "specrl",
-):
-    from envs.seq_wrapper_ma import SequenceWrapperMA
-    from envs.ldba_wrapper import LDBAWrapper
-    from envs.ltl_wrapper import LTLWrapper
-
-    if not is_safety_gym_env(name):
-        raise ValueError(f'make_env_ma only supports safety-gym envs, got: {name}')
-    env = make_safety_gym_env(name, render_mode, backend=sar_env_backend, flat=False)
-    max_steps = max_steps or 1000
-
-    propositions = get_env_attr(env, 'get_propositions')()
-    sample_task = sampler(propositions)
-    if not sequence:
-        env = LTLWrapper(env, sample_task)
-        env = LDBAWrapper(env)
-    else:
-        env = SequenceWrapperMA(env, sample_task)
-    env = TimeLimit(env, max_episode_steps=max_steps)
-    env = RemoveTruncWrapper(env)
-    return env
-
-
-def make_env_safety_ma(
-        name: str,
-        sampler: Callable[[list[str]], Callable],
-        max_steps: Optional[int] = None,
-        render_mode: str | None = None,
-        sequence: bool = False,
-        sar_env_backend: str = "specrl",
-):
-    from envs.seq_wrapper_ma import SequenceSafetyWrapperMA
-    from envs.ldba_wrapper import LDBAWrapper
-    from envs.ltl_wrapper import LTLWrapper
-
-    if not is_safety_gym_env(name):
-        raise ValueError(f'make_env_safety_ma only supports safety-gym envs, got: {name}')
-    env = make_safety_gym_env(name, render_mode, backend=sar_env_backend, flat=False)
-    max_steps = max_steps or 1000
-
-    propositions = get_env_attr(env, 'get_propositions')()
-    sample_task = sampler(propositions)
-    if not sequence:
-        env = LTLWrapper(env, sample_task)
-        env = LDBAWrapper(env)
-    else:
-        env = SequenceSafetyWrapperMA(env, sample_task)
-    env = TimeLimit(env, max_episode_steps=max_steps)
-    env = RemoveTruncWrapper(env)
     return env

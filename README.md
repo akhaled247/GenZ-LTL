@@ -52,6 +52,23 @@ PYTHONPATH=src/ python src/evaluation/eval_test_tasks_infinite.py --exp GenZ-LTL
 ```
 The results will be stored in the `results_finite` and `results_infinite` directories, respectively.
 
+### SAR (search-and-rescue)
+
+Train a single-agent RCO policy on subgoal curricula, then evaluate with Büchi automaton coordination:
+
+```bash
+# Train (100 seeds)
+PYTHONPATH=src/ python run_sar.py --script train_rco --name GenZ-SAR --curriculum zones_safety --model_config zones_safety --num_seeds 100
+
+# Single-agent LTL eval (MASAR1WC checkpoint)
+PYTHONPATH=src/ python src/evaluation/simulate.py --env PointLTL0MASAR1WC-v0 --exp GenZ-SAR --seed 0 --formula "(!surface_0 U entrapped_0) & F surface_0"
+
+# Two-agent deploy eval (shared MASAR1WC checkpoint + coordinator on MASAR2WC)
+PYTHONPATH=src/ python src/evaluation/simulate_ma_sar.py --exp GenZ-SAR --seed 0 --formula "((!surface_0 U entrapped_0) & F surface_0) & ((!surface_1 U entrapped_1) & F surface_1)"
+```
+
+Multi-agent **MARL** baselines (e.g. SafePO IPPO on `PointLTL0MASAR2-v0`) live in `RISE-Training` / `Safe-Policy-Optimization`, not in GenZ-LTL.
+
 ## Visualizations
 We present visualization results of the policy learned by GenZ-LTL in the Zone environment. The method consistently achieves the desired behavior under both complex finite-horizon and infinite-horizon specifications.
 

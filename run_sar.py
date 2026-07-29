@@ -10,15 +10,15 @@ import simple_parsing
 
 @dataclass
 class Args:
-  script: str  # train_ppo | train_rco | train_ma_ppo | train_ma_rco
+  script: str  # train_ppo | train_rco
   name: str
-  env: str = 'PointLTL0MASAR2-v0'
+  env: str = 'PointLTL0MASAR1WC-v0'
   curriculum: str
   model_config: str
   seed: int | list[int] = 0
   num_seeds: int | None = None  # if set, runs seeds 0 .. num_seeds-1
   device: str = 'cuda:1'
-  num_steps: int = 5_000_000
+  num_steps: int = 15_000_000
   num_procs: int = 16
   steps_per_process: int = 4096
   batch_size: int = 2048
@@ -59,9 +59,6 @@ def main():
       '--num_steps', str(args.num_steps),
       '--model_config', args.model_config,
       '--curriculum', args.curriculum,
-      '--discount', '0.998',
-      '--entropy_coef', '0.003',
-      '--epochs', '10', # '10',
       '--seed', str(seed),
       '--device', args.device,
       '--num_procs', str(args.num_procs),

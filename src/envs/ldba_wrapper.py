@@ -7,6 +7,7 @@ from gymnasium.core import WrapperObsType, WrapperActType
 from gymnasium import spaces
 
 from envs import get_env_attr
+from envs.seq_wrapper import pre_process_obs_sar, sar_agent_obs_keys, sar_feat_dim, sar_task
 from ltl.automata import ltl2ldba, LDBA, LDBASequence
 from ltl.logic import Assignment, FrozenAssignment
 
@@ -41,6 +42,18 @@ class LDBAWrapper(gymnasium.Wrapper):
                 # 16 dim for agent status, 16 dim for reach, and 16 dim for avoid
                 'features': spaces.Box(-np.inf, np.inf, (48,), dtype=np.float32)
             })
+        elif "SAR" in env.spec.id:
+            task = sar_task(env)
+            num_agents = getattr(task, "agent_num", 1)
+            inner = env.env
+            flat = getattr(inner, "flat", True)
+            self.agent_obs_keys = sar_agent_obs_keys(0)
+            if num_agents <= 1 or flat:
+                feat_dim = sar_feat_dim(task.lidar_conf.num_bins)
+                self.observation_space = spaces.Dict({
+                    'features': spaces.Box(-np.inf, np.inf, (feat_dim,), dtype=np.float32),
+                    'goal': self.observation_space['goal'],
+                })
         elif "LetterSafetyEnv" in env.spec.id:
             obs_dim = env.observation_space['features'].shape[0]
             self.observation_space = spaces.Dict({
@@ -199,4 +212,16 @@ class LDBAWrapper(gymnasium.Wrapper):
         new_obs[reach_mask] = 1.0
         new_obs[agent_mask] = 0.2
         return new_obs[..., None]
+
+    def pre_process_obs_sar(
+            self,
+            reach: frozenset[FrozenAssignment],
+            avoid: frozenset[FrozenAssignment],
+            agent_idx: int = 0,
+    ) -> np.ndarray:
+        keys = sar_agent_obs_keys(agent_idx)
+        feat_shape = (sar_feat_dim(sar_task(self.env).lidar_conf.num_bins),)
+        return pre_process_obs_sar(
+            self.env, keys, reach, avoid, feat_shape, agent_idx=agent_idx,
+        )
 

@@ -30,7 +30,9 @@ class SequenceSearch(ABC):
     def get_value_safety(self, seq: LDBASequence, obs) -> float:
         obs['goal'] = seq
         reach, avoid = seq[0]
-        if len(obs["features"].shape) == 1:
+        if hasattr(self.env, 'pre_process_obs_sar'):
+            obs["features"] = self.env.pre_process_obs_sar(reach, avoid)
+        elif len(obs["features"].shape) == 1:
             obs["features"] = self.env.pre_process_obs_zones(reach, avoid)
         else:
             obs["features"] = self.env.pre_process_obs_letter(reach, avoid)

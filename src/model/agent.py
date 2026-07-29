@@ -58,7 +58,9 @@ class Agent:
         
         if self.sequence is not None:
             reach, avoid = self.sequence[0]
-            if len(obs["features"].shape) == 1:
+            if hasattr(self.env, 'pre_process_obs_sar'):
+                obs["features"] = self.env.pre_process_obs_sar(reach, avoid)
+            elif len(obs["features"].shape) == 1:
                 obs["features"] = self.env.pre_process_obs_zones(reach, avoid)
             else:
                 obs["features"] = self.env.pre_process_obs_letter(reach, avoid)

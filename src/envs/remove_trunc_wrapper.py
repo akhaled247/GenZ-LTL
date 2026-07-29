@@ -10,7 +10,10 @@ class RemoveTruncWrapper(gymnasium.Wrapper):
 
     def step(self, action: WrapperActType) -> tuple[WrapperObsType, SupportsFloat, bool, dict[str, Any]]:
         obs, reward, terminated, truncated, info = super().step(action)
-        done = terminated or truncated  # This is very important
+        if isinstance(terminated, dict):
+            done = any(terminated.values()) or any(truncated.values())
+        else:
+            done = terminated or truncated
         return obs, reward, done, info
 
     def reset(
