@@ -15,4 +15,7 @@ class ExperimentConfig:
     num_procs: int = 1  # number of processes to use
     device: str = 'cpu'  # device to use for training
     ltl_sampler: str | None = None  # name of the LTL sampler
-
+    parallel: bool = False  # B1: ParallelEnv when vec_backend == "list"
+    vec_backend: str = "list"  # "list" | "safety_async"
+    sar_env_backend: str = "specrl"  # C3: "specrl" | "genz_local"
+    fast_action_bridge: bool = False  # D2: pinned CPU action transfer

@@ -20,7 +20,8 @@ def make_env(
         sampler: Callable[[list[str]], Callable],
         max_steps: Optional[int] = None,
         render_mode: str | None = None,
-        sequence=False
+        sequence=False,
+        sar_env_backend: str = "specrl",
 ):
     from envs.pretraining.pretraining_env import PretrainingEnv
     from envs.seq_wrapper import SequenceWrapper
@@ -35,7 +36,7 @@ def make_env(
         env = PretrainingEnv(propositions, impossible_assignments)
         max_steps = max_steps or 100
     elif is_safety_gym_env(name):
-        env = make_safety_gym_env(name, render_mode)
+        env = make_safety_gym_env(name, render_mode, backend=sar_env_backend)
         max_steps = max_steps or 1000
     elif name.startswith('Letter'):
         env = make_letter_env(name, render_mode)
@@ -64,6 +65,7 @@ def make_env_safety(
         max_steps: Optional[int] = None,
         render_mode: str | None = None,
         sequence=False,
+        sar_env_backend: str = "specrl",
 ):
     from envs.pretraining.pretraining_env import PretrainingEnv
     from envs.seq_wrapper import SequenceSafetyWrapper
@@ -78,7 +80,7 @@ def make_env_safety(
         env = PretrainingEnv(propositions, impossible_assignments)
         max_steps = max_steps or 100
     elif is_safety_gym_env(name):
-        env = make_safety_gym_env(name, render_mode)
+        env = make_safety_gym_env(name, render_mode, backend=sar_env_backend)
         max_steps = max_steps or 1000
     elif name.startswith('Letter'):
         env = make_letter_env(name, render_mode)
@@ -105,11 +107,14 @@ def is_safety_gym_env(name: str) -> bool:
     return any([name.startswith(agent_name) for agent_name in ['Point', 'Car', 'Racecar', 'Doggo', 'Ant']])
 
 
-def make_safety_gym_env(name: str, render_mode: str | None = None):
+def make_safety_gym_env(
+        name: str,
+        render_mode: str | None = None,
+        backend: str = "specrl",
+):
     if "SAR" in name:
-        import specbench  # noqa: F401 — registers SAR env IDs
-        from specbench.envs.zones.zone_env import make_zone_env
-        return make_zone_env(name, render_mode=render_mode, flat=True)
+        from envs.sar_factory import make_sar_base_env
+        return make_sar_base_env(name, render_mode=render_mode, backend=backend)
 
     # noinspection PyUnresolvedReferences
     import safety_gymnasium

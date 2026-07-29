@@ -1,5 +1,5 @@
 import argparse
-from typing import Optional
+from typing import Any, Optional
 
 import gymnasium
 import simple_parsing
@@ -18,6 +18,7 @@ from envs import make_env_safety, get_env_attr
 
 from sequence.samplers import CurriculumSampler, curricula
 from utils import torch_utils
+from utils.train_device import resolve_training_device
 from utils.logging.file_logger import FileLogger
 from utils.logging.multi_logger import MultiLogger
 from utils.logging.text_logger import TextLogger
@@ -38,14 +39,23 @@ class Trainer:
         if resuming:
             self.model_store.load_vocab()
         else:
-            preprocessing.init_vocab(envs[0].get_possible_assignments())
+            preprocessing.init_vocab(get_env_attr(envs[0], 'get_possible_assignments')())
             self.model_store.save_vocab()
         # pretrained_model = self.load_pretrained_model()
         model = build_model_safety(envs[0], training_status, model_configs[self.args.model_config])
         model.to(self.args.experiment.device)
         print(model)
-        algo = torch_ac.RCO(envs, model, self.args.experiment.device, self.args.rco,
-                            preprocess_obss=preprocessing.preprocess_obss, parallel=False)
+        async_kwargs = None
+        if self.args.experiment.vec_backend == "safety_async":
+            async_kwargs = self.async_factory_kwargs(training_status["curriculum_stage"])
+        algo = torch_ac.RCO(
+            envs, model, self.args.experiment.device, self.args.rco,
+            preprocess_obss=preprocessing.preprocess_obss,
+            parallel=self.args.experiment.parallel,
+            vec_backend=self.args.experiment.vec_backend,
+            fast_action_bridge=self.args.experiment.fast_action_bridge,
+            async_factory_kwargs=async_kwargs,
+        )
         if "optimizer_state" in training_status:
             algo.optimizer.load_state_dict(training_status["optimizer_state"])
             self.text_logger.info("Loaded optimizer from existing run.")
@@ -91,17 +101,45 @@ class Trainer:
                 self.text_logger.important_info("Finished curriculum.")
                 break
 
+    def make_probe_env(self, curriculum_stage: int) -> gymnasium.Env:
+        curriculum = curricula[self.args.curriculum]
+        curriculum.stage_index = curriculum_stage
+        self.text_logger.important_info(f"Curriculum stage: {curriculum.stage_index}")
+        sampler = CurriculumSampler.partial(curriculum)
+        return make_env_safety(
+            self.args.experiment.env,
+            sampler,
+            sequence=True,
+            sar_env_backend=self.args.experiment.sar_env_backend,
+        )
+
+    def async_factory_kwargs(self, curriculum_stage: int) -> dict[str, Any]:
+        return {
+            "n_envs": self.args.experiment.num_procs,
+            "env_name": self.args.experiment.env,
+            "curriculum_name": self.args.curriculum,
+            "curriculum_stage": curriculum_stage,
+            "seed": self.args.experiment.seed,
+            "max_steps": None,
+            "sar_env_backend": self.args.experiment.sar_env_backend,
+            "safety": True,
+            "sequence": True,
+        }
+
     def make_envs(self, curriculum_stage: int) -> list[gymnasium.Env]:
         utils.set_seed(self.args.experiment.seed)
+        if self.args.experiment.vec_backend == "safety_async":
+            env = self.make_probe_env(curriculum_stage)
+            seed_offset = 100 * self.args.experiment.seed
+            env.reset(seed=seed_offset)
+            self.text_logger.info(
+                f"Async vec backend: probe env on main; {self.args.experiment.num_procs} workers in subprocesses."
+            )
+            return [env]
+
         envs = []
         for i in range(self.args.experiment.num_procs):
-            curriculum = curricula[self.args.curriculum]
-            curriculum.stage_index = curriculum_stage
-            curriculum.stage_index = curriculum_stage
-            self.text_logger.important_info(f"Curriculum stage: {curriculum.stage_index}")
-            sampler = CurriculumSampler.partial(curriculum)
-            envs.append(make_env_safety(self.args.experiment.env, sampler, sequence=True))
-        # Set different seeds for each environment. The seed offset is used to ensure that the seeds do not overlap.
+            envs.append(self.make_probe_env(curriculum_stage))
         seed_offset = 100 * self.args.experiment.seed
         seeds = [seed_offset + i for i in range(self.args.experiment.num_procs)]
         self.text_logger.info(f"Using seeds: {seeds}")
@@ -171,9 +209,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument('--save', action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args()
 
-    if args.experiment.device == 'gpu':
-        assert torch.cuda.is_available(), "CUDA is not available."
-        args.experiment.device = 'cuda'
+    args.experiment.device = resolve_training_device(args.experiment.device)
 
     if args.pretraining_experiment is None and args.freeze_pretrained:
         raise ValueError("Cannot freeze without providing a pretrained model.")
