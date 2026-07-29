@@ -112,7 +112,6 @@ class SequenceWrapper(gymnasium.Wrapper):
             else:
                 reward = 1. if terminated else 0
         
-        cost = 1.0 if reward == -1. else 0.0
         reach, avoid = self.goal_seq[self.num_reached] \
             if self.num_reached < len(self.goal_seq) else self.goal_seq[-1]
         if "SAR" in self.env.spec.id:
@@ -124,7 +123,7 @@ class SequenceWrapper(gymnasium.Wrapper):
         
         self.obs = obs
         self.info = info
-        return obs, (reward, cost), terminated, truncated, info
+        return obs, reward, terminated, truncated, info
 
     def apply_epsilon_action(self):
         assert self.goal_seq[self.num_reached][0] == LDBASequence.EPSILON
