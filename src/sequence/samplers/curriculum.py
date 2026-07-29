@@ -390,8 +390,16 @@ SAR_CURRICULUM = Curriculum([
 ])
 # Pμ for RCO is per subgoal segment in the log window, not full LTL sequence success.
 SAR_SAFETY_CURRICULUM = Curriculum([
-    EnumerateCurriculumStageZones(
+    ExplicitCurriculumStage(  # 0 — single-prop reach sequences
+        task_fn=all_reach_tasks(1),
+        temperature=0.5,
         threshold=0.95,
         threshold_type='success_rate',
+    ),
+    ExplicitCurriculumStage(  # 1 — two-prop reach sequences (no gate)
+        task_fn=all_reach_tasks(2),
+        temperature=0.5,
+        threshold=None,
+        threshold_type='mean',
     ),
 ])

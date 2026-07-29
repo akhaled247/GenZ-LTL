@@ -1,4 +1,4 @@
-"""Smoke probe for GenZ SAR env wiring (48-dim features, propositions)."""
+"""Smoke probe for GenZ SAR env wiring (64-dim features, propositions)."""
 import argparse
 import sys
 import time
@@ -11,11 +11,14 @@ import specbench  # noqa: F401
 from sequence.samplers import CurriculumSampler, curricula
 from envs import make_env, make_env_safety
 from envs.sar_factory import make_sar_base_env
+from envs.seq_wrapper import sar_feat_dim
 
 PROBES = [
     ("PointLTL0MASAR1-v0", False),
     ("PointLTL0MASAR1WC-v0", True),
 ]
+LIDAR_BINS = 16
+EXPECTED_FEAT_DIM = sar_feat_dim(LIDAR_BINS)
 
 
 def _benchmark_reset(env_id: str, backend: str) -> None:
@@ -28,6 +31,20 @@ def _benchmark_reset(env_id: str, backend: str) -> None:
     second = time.perf_counter() - t1
     env.close()
     print(f"  reset benchmark ({backend}): first={first:.3f}s second={second:.3f}s")
+
+
+def _assert_sar_features(obs: dict, env_id: str) -> None:
+    features = obs["features"]
+    assert features.shape == (EXPECTED_FEAT_DIM,), features.shape
+    buildings_slice = features[LIDAR_BINS:2 * LIDAR_BINS]
+    reach_slice = features[2 * LIDAR_BINS:3 * LIDAR_BINS]
+    avoid_slice = features[3 * LIDAR_BINS:]
+    assert buildings_slice.shape == (LIDAR_BINS,)
+    assert reach_slice.shape == (LIDAR_BINS,)
+    assert avoid_slice.shape == (LIDAR_BINS,)
+    print(f"  buildings_lidar max: {buildings_slice.max():.4f}")
+    print(f"  reach_lidar max: {reach_slice.max():.4f}")
+    print(f"  avoid_lidar max: {avoid_slice.max():.4f}")
 
 
 def main():
@@ -51,7 +68,7 @@ def main():
             sar_env_backend=cli.sar_env_backend,
         )
         obs = env.reset(seed=0)
-        assert obs["features"].shape == (48,), obs["features"].shape
+        _assert_sar_features(obs, env_id)
         print(env_id)
         print("  propositions:", env.get_propositions())
         print("  features:", obs["features"].shape)

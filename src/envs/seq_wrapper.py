@@ -12,7 +12,11 @@ SAR_AGENT_OBS_KEYS = [
     "accelerometer_0", "velocimeter_0", "gyro_0",
     "magnetometer_0", "wall_sensor_0",
 ]
-SAR_FEAT_DIM = 48
+ZONES_SAFETY_FEAT_DIM = 48
+
+
+def sar_feat_dim(lidar_bins: int, agent_obs_dim: int = 16) -> int:
+    return agent_obs_dim + 3 * lidar_bins
 
 
 def sar_task(env: gymnasium.Env):
@@ -32,6 +36,10 @@ def sar_agent_obs(env: gymnasium.Env, agent_idx: int = 0) -> dict:
 def casualty_lidar_key(prop: str) -> str:
     category, idx = prop.rsplit("_", 1)
     return f"{category}_casualtys_lidar_{idx}"
+
+
+def buildings_lidar_key(agent_idx: int = 0) -> str:
+    return f"terracotta_buildings_lidar_{agent_idx}"
 
 
 def lidar_for_assignments(original_obs, assignments, lidar_dim: int) -> np.ndarray:
@@ -57,9 +65,11 @@ def pre_process_obs_sar(
         original_obs[k].flatten() if np.ndim(original_obs[k]) > 1 else original_obs[k]
         for k in agent_obs_keys
     ])
+    buildings_obs = original_obs[buildings_lidar_key(0)].flatten()
+    assert buildings_obs.shape == (lidar_dim,)
     reach_obs = lidar_for_assignments(original_obs, reach, lidar_dim)
     avoid_obs = lidar_for_assignments(original_obs, avoid, lidar_dim)
-    obs = np.concatenate([agent_obs, reach_obs, avoid_obs]).astype(np.float32)
+    obs = np.concatenate([agent_obs, buildings_obs, reach_obs, avoid_obs]).astype(np.float32)
     assert obs.shape == feat_shape, f"obs.shape = {obs.shape}, expected {feat_shape}"
     return obs
 
@@ -73,8 +83,10 @@ class SequenceWrapper(gymnasium.Wrapper):
         super().__init__(env)
         if "SAR" in env.spec.id:
             self.agent_obs_keys = SAR_AGENT_OBS_KEYS
+            lidar_bins = sar_task(env).lidar_conf.num_bins
+            feat_dim = sar_feat_dim(lidar_bins)
             self.observation_space = spaces.Dict({
-                'features': spaces.Box(-np.inf, np.inf, (SAR_FEAT_DIM,), dtype=np.float32),
+                'features': spaces.Box(-np.inf, np.inf, (feat_dim,), dtype=np.float32),
             })
         else:
             self.observation_space = spaces.Dict({
@@ -165,12 +177,14 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
         self.region_order = env.get_propositions()
         if "SAR" in env.spec.id:
             self.agent_obs_keys = SAR_AGENT_OBS_KEYS
+            lidar_bins = sar_task(env).lidar_conf.num_bins
+            feat_dim = sar_feat_dim(lidar_bins)
             self.observation_space = spaces.Dict({
-                'features': spaces.Box(-np.inf, np.inf, (SAR_FEAT_DIM,), dtype=np.float32),
+                'features': spaces.Box(-np.inf, np.inf, (feat_dim,), dtype=np.float32),
             })
         elif "PointLtlSafety" in env.spec.id:
             self.observation_space = spaces.Dict({
-                'features': spaces.Box(-np.inf, np.inf, (SAR_FEAT_DIM,), dtype=np.float32),
+                'features': spaces.Box(-np.inf, np.inf, (ZONES_SAFETY_FEAT_DIM,), dtype=np.float32),
             })
             self.agent_obs_keys = ["accelerometer", "velocimeter", "gyro", "magnetometer", "wall_sensor"]
         elif "LetterSafetyEnv" in env.spec.id:

@@ -20,6 +20,14 @@ class Args:
   device: str = 'cuda:1'
   num_steps: int = 5_000_000
   num_procs: int = 16
+  steps_per_process: int = 4096
+  batch_size: int = 2048
+  lr: float = 0.0003
+  epochs: int = 80
+  discount: float = 0.998
+  entropy_coef: float = 0.003
+  log_interval: int = 1
+  save_interval: int = 2
   log_csv: bool = True
   log_wandb: bool = False
   save: bool = True
@@ -70,6 +78,14 @@ def main():
       '--num_procs', str(args.num_procs),
       '--vec_backend', args.vec_backend,
       '--sar_env_backend', args.sar_env_backend,
+      '--steps_per_process', str(args.steps_per_process),
+      '--batch_size', str(args.batch_size),
+      '--lr', str(args.lr),
+      '--discount', str(args.discount),
+      '--entropy_coef', str(args.entropy_coef),
+      '--epochs', str(args.epochs),
+      '--log_interval', str(args.log_interval),
+      '--save_interval', str(args.save_interval),
     ]
     if args.parallel:
       command.append('--parallel')
