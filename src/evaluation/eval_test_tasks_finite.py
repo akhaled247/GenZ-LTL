@@ -52,7 +52,7 @@ env_to_tasks = {
     ],
 
     'PointLTL0MASAR1WC-v0': [
-        '(!surface U entrapped) & F surface',
+        '(!surface_0 U entrapped_0) & F surface_0',
     ],
 }
 
@@ -68,6 +68,7 @@ def main(env, exp, seeds):
         'PointLtlSafety5-v0': 0.998,
         'LetterEnv-v0': 0.94,
         'LetterSafetyEnv-v0': 0.94,
+        'PointLTL0MASAR1WC-v0': 0.998,
     }[env]
     
     num_procs = len(seeds)

@@ -10,9 +10,9 @@ import simple_parsing
 
 @dataclass
 class Args:
-  script: str  # train_ppo | train_rco
+  script: str  # train_ppo | train_rco | train_ma_ppo | train_ma_rco
   name: str
-  env: str
+  env: str = 'PointLTL0MASAR2-v0'
   curriculum: str
   model_config: str
   seed: int | list[int] = 0

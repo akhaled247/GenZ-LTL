@@ -33,23 +33,42 @@ def sar_agent_obs(env: gymnasium.Env, agent_idx: int = 0) -> dict:
     return original_obs
 
 
-def casualty_lidar_key(prop: str) -> str:
-    category, idx = prop.rsplit("_", 1)
-    return f"{category}_casualtys_lidar_{idx}"
+def casualty_lidar_key(prop: str, agent_idx: int = 0) -> str:
+    from specbench.envs.zones.sar_propositions import resolve_casualty_lidar_key
+    return resolve_casualty_lidar_key(prop, agent_idx)
+
+
+def lidar_keys_for_prop(prop: str, agent_idx: int = 0, num_agents: int = 1) -> list[str]:
+    from specbench.envs.zones.sar_propositions import resolve_casualty_lidar_keys
+    return resolve_casualty_lidar_keys(prop, agent_idx=agent_idx, num_agents=num_agents)
 
 
 def buildings_lidar_key(agent_idx: int = 0) -> str:
     return f"terracotta_buildings_lidar_{agent_idx}"
 
 
-def lidar_for_assignments(original_obs, assignments, lidar_dim: int) -> np.ndarray:
+def lidar_for_assignments(
+    original_obs,
+    assignments,
+    lidar_dim: int,
+    agent_idx: int = 0,
+    num_agents: int = 1,
+) -> np.ndarray:
     keys = []
     for assignment in assignments:
         for prop in assignment.to_string():
-            keys.append(casualty_lidar_key(prop))
+            keys.extend(lidar_keys_for_prop(prop, agent_idx, num_agents))
     if not keys:
         return np.zeros(lidar_dim, dtype=np.float64)
-    return np.max(np.vstack([original_obs[k] for k in keys]), axis=0)
+    available = [original_obs[k] for k in keys if k in original_obs]
+    if not available:
+        return np.zeros(lidar_dim, dtype=np.float64)
+    return np.max(np.vstack(available), axis=0)
+
+
+def sar_agent_obs_keys(agent_idx: int = 0) -> list[str]:
+    suffix = f"_{agent_idx}"
+    return [k.rsplit("_", 1)[0] + suffix for k in SAR_AGENT_OBS_KEYS]
 
 
 def pre_process_obs_sar(
@@ -58,17 +77,23 @@ def pre_process_obs_sar(
         reach: frozenset[FrozenAssignment],
         avoid: frozenset[FrozenAssignment],
         feat_shape: tuple[int, ...],
+        agent_idx: int = 0,
 ) -> np.ndarray:
-    original_obs = sar_agent_obs(env, 0)
+    original_obs = sar_agent_obs(env, agent_idx)
     lidar_dim = sar_task(env).lidar_conf.num_bins
+    num_agents = getattr(sar_task(env), "agent_num", 1)
     agent_obs = np.concatenate([
         original_obs[k].flatten() if np.ndim(original_obs[k]) > 1 else original_obs[k]
         for k in agent_obs_keys
     ])
-    buildings_obs = original_obs[buildings_lidar_key(0)].flatten()
+    buildings_obs = original_obs[buildings_lidar_key(agent_idx)].flatten()
     assert buildings_obs.shape == (lidar_dim,)
-    reach_obs = lidar_for_assignments(original_obs, reach, lidar_dim)
-    avoid_obs = lidar_for_assignments(original_obs, avoid, lidar_dim)
+    reach_obs = lidar_for_assignments(
+        original_obs, reach, lidar_dim, agent_idx=agent_idx, num_agents=num_agents,
+    )
+    avoid_obs = lidar_for_assignments(
+        original_obs, avoid, lidar_dim, agent_idx=agent_idx, num_agents=num_agents,
+    )
     obs = np.concatenate([agent_obs, buildings_obs, reach_obs, avoid_obs]).astype(np.float32)
     assert obs.shape == feat_shape, f"obs.shape = {obs.shape}, expected {feat_shape}"
     return obs

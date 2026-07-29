@@ -16,6 +16,7 @@ from envs.seq_wrapper import sar_feat_dim
 PROBES = [
     ("PointLTL0MASAR1-v0", False),
     ("PointLTL0MASAR1WC-v0", True),
+    ("PointLTL2MASAR2-v0", False),
 ]
 LIDAR_BINS = 16
 EXPECTED_FEAT_DIM = sar_feat_dim(LIDAR_BINS)
@@ -71,6 +72,9 @@ def main():
         _assert_sar_features(obs, env_id)
         print(env_id)
         print("  propositions:", env.get_propositions())
+        team = [p for p in env.get_propositions() if p.startswith("all_")]
+        if team:
+            print("  team props:", team)
         print("  features:", obs["features"].shape)
         print("  goal len:", len(obs["goal"]))
         print("  reset props:", obs["propositions"])

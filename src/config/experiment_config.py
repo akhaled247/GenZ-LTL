@@ -18,4 +18,5 @@ class ExperimentConfig:
     parallel: bool = False  # B1: ParallelEnv when vec_backend == "list"
     vec_backend: str = "list"  # "list" | "safety_async"
     sar_env_backend: str = "specrl"  # C3: "specrl" | "genz_local"
-    fast_action_bridge: bool = False  # D2: pinned CPU action transfer
+    multi_agent: bool = False  # use MA env stack + IPPO/RCO
+    fast_action_bridge: bool = False
