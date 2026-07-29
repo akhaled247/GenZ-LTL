@@ -368,38 +368,9 @@ FLATWORLD_CURRICULUM = Curriculum([
     ),
 ])
 
-SAR_CURRICULUM = Curriculum([
-    ExplicitCurriculumStage(  # 0 — reach one prop; gate on full-episode Pμ
-        task_fn=all_reach_tasks(1),
-        temperature=0.5,
-        threshold=0.95,
-        threshold_type='success_rate',
-    ),
-    ExplicitCurriculumStage(  # 1 — reach both in sequence until num_steps
-        task_fn=all_reach_tasks(2),
-        temperature=0.5,
-        threshold=None,
-        threshold_type='mean',
-    ),
-    ExplicitCurriculumStage(  # 0
-            task_fn=all_reach_tasks(2),
-            temperature=0.5,
-            threshold=None,
-            threshold_type='mean',
-        ),
-])
 # Pμ for RCO is per subgoal segment in the log window, not full LTL sequence success.
 SAR_SAFETY_CURRICULUM = Curriculum([
-    ExplicitCurriculumStage(  # 0 — single-prop reach sequences
-        task_fn=all_reach_tasks(1),
-        temperature=0.5,
-        threshold=0.95,
-        threshold_type='success_rate',
-    ),
-    ExplicitCurriculumStage(  # 1 — two-prop reach sequences (no gate)
-        task_fn=all_reach_tasks(2),
-        temperature=0.5,
-        threshold=None,
-        threshold_type='mean',
-    ),
+    EnumerateCurriculumStageZones(
+        threshold=0.99,
+        threshold_type='min'),
 ])

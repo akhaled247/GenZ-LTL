@@ -74,6 +74,7 @@ def main():
         print("  features:", obs["features"].shape)
         print("  goal len:", len(obs["goal"]))
         print("  reset props:", obs["propositions"])
+        print(f"obs={obs}")
         env.close()
 
 

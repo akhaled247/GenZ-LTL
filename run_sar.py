@@ -50,17 +50,6 @@ def main():
   env = os.environ.copy()
   env['PYTHONPATH'] = 'src'
 
-  if args.script == 'train_ppo':
-    if args.env.endswith('WC-v0'):
-      raise ValueError('Use train_rco for WC / safety SAR envs')
-    if args.curriculum != args.env:
-      print('Warning: curriculum differs from env id', args.curriculum, args.env)
-  elif args.script == 'train_rco':
-    if not args.env.endswith('WC-v0'):
-      print('Warning: train_rco is intended for WC safety SAR envs')
-  else:
-    raise ValueError(f'Unknown script: {args.script}')
-
   seeds = _resolve_seeds(args)
   for seed in seeds:
     command = [

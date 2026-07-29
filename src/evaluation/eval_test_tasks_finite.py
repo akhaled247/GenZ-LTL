@@ -50,6 +50,10 @@ env_to_tasks = {
         '!(j | b | d) U (a & (!c U (f & F (g & (!d U e)))))',
         '!(f | g) U ((a & (!b U c)) & F (d & (!e U f)))',
     ],
+
+    'PointLTL0MASAR1WC-v0': [
+        '(!surface U entrapped) & F surface',
+    ],
 }
 
 
