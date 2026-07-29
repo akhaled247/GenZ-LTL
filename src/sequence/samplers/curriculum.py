@@ -20,7 +20,7 @@ class CurriculumStage(ABC):
     threshold_type: Literal['mean', 'min'] | None
 
     @abstractmethod
-    def sample(self, propositions: list[str]) -> LDBASequence:
+    def sample(self, propositions: list[str], current=None) -> LDBASequence:
         pass
 
     @abstractmethod
@@ -37,7 +37,7 @@ class ExplicitCurriculumStage(CurriculumStage):
     _tasks: list[LDBASequence] | None = None
     _task_success: dict[LDBASequence, float] | None = None
 
-    def sample(self, propositions: list[str]) -> LDBASequence:
+    def sample(self, propositions: list[str], current=None) -> LDBASequence:
         if self._tasks is None:
             self._tasks = []
             if self.task_fn is not None:
@@ -148,7 +148,7 @@ class RandomCurriculumStage(CurriculumStage):
     """A curriculum stage in which tasks are sampled randomly."""
     sampler: Callable[[list[str]], LDBASequence]
 
-    def sample(self, propositions: list[str]) -> LDBASequence:
+    def sample(self, propositions: list[str], current=None) -> LDBASequence:
         return self.sampler(propositions)
 
     def update_task_success(self, task_success: dict[LDBASequence, float]) -> None:
@@ -161,9 +161,9 @@ class MultiRandomStage(CurriculumStage):
     stages: list[RandomCurriculumStage]
     probs: list[float]
 
-    def sample(self, propositions: list[str]) -> LDBASequence:
+    def sample(self, propositions: list[str], current=None) -> LDBASequence:
         stage = np.random.choice(self.stages, p=self.probs)
-        return stage.sample(propositions)
+        return stage.sample(propositions, current)
 
     def update_task_success(self, task_success: dict[LDBASequence, float]) -> None:
         pass
