@@ -42,7 +42,7 @@ if "Safety" in env_name:
 else:
     model = build_model(env, training_status, config)
 
-props = env.get_propositions()
+props = env.unwrapped.get_propositions()
 search = ExhaustiveSearchSafety(env, model, props, num_loops=2)
 agent = Agent(env, model, search=search, propositions=props, verbose=False)
 

@@ -17,7 +17,7 @@ class PartiallyOrderedSampler:
     def __call__(self) -> str | list[list[list[str]]]:
         if self.as_list:
             return self.sample_as_list()
-        seqs = [self.sample_sequence() for _ in range(self.num_conjuncts)]
+        seqs = [self.unwrapped.sample_sequence() for _ in range(self.num_conjuncts)]
         formulas = [self.sequence_to_formula(seq) for seq in seqs]
         formula = ' & '.join(formulas)
         return formula
@@ -25,7 +25,7 @@ class PartiallyOrderedSampler:
     def sample_as_list(self) -> list[list[list[str]]]:
         num_conjuncts = random.randint(*self.num_conjuncts) if isinstance(self.num_conjuncts,
                                                                           list) else self.num_conjuncts
-        seqs = [self.sample_sequence() for _ in range(num_conjuncts)]
+        seqs = [self.unwrapped.sample_sequence() for _ in range(num_conjuncts)]
         # print(' & '.join(map(str, seqs)))
         return seqs
 

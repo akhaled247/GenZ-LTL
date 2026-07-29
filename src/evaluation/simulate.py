@@ -50,7 +50,7 @@ def simulate(env, gamma, exp, seed, num_episodes, formula, finite, render, deter
     training_status = model_store.load_training_status(map_location='cpu')
     model = build_model_safety(env, training_status, config) if use_safety \
         else build_model(env, training_status, config)
-    props = env.get_propositions()
+    props = env.unwrapped.get_propositions()
     search = ExhaustiveSearchSafety(env, model, props, num_loops=2) if use_safety \
         else ExhaustiveSearch(model, props, num_loops=2)
     agent = Agent(env, model, search=search, propositions=props, verbose=render)

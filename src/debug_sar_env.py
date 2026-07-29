@@ -71,8 +71,8 @@ def main():
         obs = env.reset(seed=0)
         _assert_sar_features(obs, env_id)
         print(env_id)
-        print("  propositions:", env.get_propositions())
-        team = [p for p in env.get_propositions() if p.startswith("all_")]
+        print("  propositions:", env.unwrapped.get_propositions())
+        team = [p for p in env.unwrapped.get_propositions() if p.startswith("all_")]
         if team:
             print("  team props:", team)
         print("  features:", obs["features"].shape)

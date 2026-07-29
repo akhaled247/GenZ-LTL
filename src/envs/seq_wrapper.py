@@ -117,10 +117,10 @@ class SequenceWrapper(gymnasium.Wrapper):
             self.observation_space = spaces.Dict({
                 'features': env.observation_space,
             })
-        self.sample_sequence = sample_sequence
+        self.unwrapped.sample_sequence = sample_sequence
         self.goal_seq = None
         self.num_reached = 0
-        self.propositions = set(env.get_propositions())
+        self.propositions = set(env.unwrapped.get_propositions())
         self.partial_reward = partial_reward
         self.obs = None
         self.info = None
@@ -170,7 +170,7 @@ class SequenceWrapper(gymnasium.Wrapper):
     def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[
         WrapperObsType, dict[str, Any]]:
         obs, info = super().reset(seed=seed, options=options)
-        self.goal_seq = self.sample_sequence()
+        self.goal_seq = self.unwrapped.sample_sequence()
         self.num_reached = 0
         if "SAR" in self.env.spec.id:
             reach, avoid = self.goal_seq[self.num_reached]
@@ -199,7 +199,7 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
 
     def __init__(self, env: gymnasium.Env, sample_sequence: Callable[[], LDBASequence], partial_reward=False):
         super().__init__(env)
-        self.region_order = env.get_propositions()
+        self.region_order = env.unwrapped.get_propositions()
         if "SAR" in env.spec.id:
             self.agent_obs_keys = SAR_AGENT_OBS_KEYS
             lidar_bins = sar_task(env).lidar_conf.num_bins
@@ -217,7 +217,7 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
             self.observation_space = spaces.Dict({
                 'features': spaces.Box(0, 1, (obs_dim, obs_dim, 1), dtype=np.float32)
             })
-        self.sample_sequence = sample_sequence
+        self.unwrapped.sample_sequence = sample_sequence
         self.goal_seq = None
         self.num_reached = 0
         self.propositions = set(self.region_order)
@@ -236,7 +236,7 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
             terminated = True
         elif assignment in reach:
             reward = 1.0; info['success'] = True
-            self.goal_seq = self.sample_sequence(assignment)
+            self.goal_seq = self.unwrapped.sample_sequence(assignment)
             reach, avoid = self.goal_seq[self.num_reached]
         elif 'cost_ltl_walls' in info and info['cost_ltl_walls'] > 0:
             cost = 1.0; terminated = True
@@ -252,7 +252,7 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
     def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[
         WrapperObsType, dict[str, Any]]:
         obs, info = super().reset(seed=seed, options=options)
-        self.goal_seq = self.sample_sequence()
+        self.goal_seq = self.unwrapped.sample_sequence()
         self.num_reached = 0
         reach, avoid = self.goal_seq[self.num_reached]
         

@@ -60,7 +60,7 @@ class LDBAWrapper(gymnasium.Wrapper):
                 'features': spaces.Box(0, 1, (obs_dim, obs_dim, 1), dtype=np.float32)
             })
         self.agent_obs_keys = ["accelerometer", "velocimeter", "gyro", "magnetometer", "wall_sensor"]
-        self.region_order = env.get_propositions()
+        self.region_order = env.unwrapped.get_propositions()
         self.terminate_on_acceptance = False
         self.ldba = None
         # Holds a list of potential current states.
