@@ -18,23 +18,23 @@ class Args:
   seed: int | list[int] = 0
   num_seeds: int | None = None  # if set, runs seeds 0 .. num_seeds-1
   device: str = 'cuda:1'
-  num_steps: int = 15_000_000
-  num_procs: int = 16
+  num_steps: int = 10_000_000
+  num_procs: int = 24
   steps_per_process: int = 4096
   batch_size: int = 2048
   lr: float = 0.0003
-  epochs: int = 80
+  epochs: int = 10
   discount: float = 0.998
   entropy_coef: float = 0.003
   log_interval: int = 1
-  save_interval: int = 2
+  save_interval: int = 10
   log_csv: bool = True
   log_wandb: bool = False
   save: bool = True
   parallel: bool = False
-  vec_backend: str = 'list'
+  vec_backend: str = 'safety_async'
   sar_env_backend: str = 'specrl'
-  fast_action_bridge: bool = False
+  fast_action_bridge: bool = True
 
 
 def _resolve_seeds(args: Args) -> list[int]:
