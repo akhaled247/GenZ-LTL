@@ -8,8 +8,7 @@ from typing import Any
 DEPLOY_META_FILENAME = "deploy_meta.json"
 MA_EVAL_ENV_DEFAULT = "PointLTL0MASAR2WC-v0"
 MA_EVAL_FORMULA_DEFAULT = (
-    "((!surface_0 U entrapped_0) & F surface_0) "
-    "& ((!surface_1 U entrapped_1) & F surface_1)"
+    "((!surface_0 & !surface_1) U all_entrapped) & (F surface_0 & F surface_1)"
 )
 FEAT_RECIPE_SAR_V1 = "sar_v1"
 FEAT_RECIPE_LEGACY_V0 = "legacy_v0"

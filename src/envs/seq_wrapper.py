@@ -39,8 +39,20 @@ def casualty_lidar_key(prop: str, agent_idx: int = 0) -> str:
     return resolve_casualty_lidar_key(prop, agent_idx)
 
 
-def lidar_keys_for_prop(prop: str, agent_idx: int = 0, num_agents: int = 1) -> list[str]:
-    from specbench.envs.zones.sar_propositions import resolve_casualty_lidar_keys
+def lidar_keys_for_prop(
+    prop: str,
+    agent_idx: int = 0,
+    num_agents: int = 1,
+    available_keys: set[str] | frozenset[str] | None = None,
+) -> list[str]:
+    from specbench.envs.zones.sar_propositions import (
+        resolve_casualty_lidar_keys,
+        resolve_casualty_lidar_keys_for_observer,
+    )
+    if available_keys is not None:
+        return resolve_casualty_lidar_keys_for_observer(
+            prop, observer_idx=agent_idx, num_agents=num_agents, available_keys=available_keys,
+        )
     return resolve_casualty_lidar_keys(prop, agent_idx=agent_idx, num_agents=num_agents)
 
 
@@ -56,9 +68,12 @@ def lidar_for_assignments(
     num_agents: int = 1,
 ) -> np.ndarray:
     keys = []
+    obs_keys = set(original_obs.keys())
     for assignment in assignments:
         for prop in assignment.to_string():
-            keys.extend(lidar_keys_for_prop(prop, agent_idx, num_agents))
+            keys.extend(lidar_keys_for_prop(
+                prop, agent_idx, num_agents, available_keys=obs_keys,
+            ))
     if not keys:
         return np.zeros(lidar_dim, dtype=np.float64)
     available = [original_obs[k] for k in keys if k in original_obs]
@@ -107,13 +122,18 @@ def pre_process_obs_sar(
     num_agents = getattr(sar_task(env), "agent_num", 1)
     used_keys = set(agent_obs_keys)
     used_keys.add(buildings_lidar_key(agent_idx))
+    obs_keys = set(original_obs.keys())
     for assignment in reach:
         for prop in assignment.to_string():
-            used_keys.update(lidar_keys_for_prop(prop, agent_idx, num_agents))
+            used_keys.update(lidar_keys_for_prop(
+                prop, agent_idx, num_agents, available_keys=obs_keys,
+            ))
     for assignment in avoid:
         for prop in assignment.to_string():
             if prop:
-                used_keys.update(lidar_keys_for_prop(prop, agent_idx, num_agents))
+                used_keys.update(lidar_keys_for_prop(
+                    prop, agent_idx, num_agents, available_keys=obs_keys,
+                ))
     agent_obs = np.concatenate([
         original_obs[k].flatten() if np.ndim(original_obs[k]) > 1 else original_obs[k]
         for k in agent_obs_keys
