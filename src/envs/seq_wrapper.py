@@ -120,7 +120,7 @@ class SequenceWrapper(gymnasium.Wrapper):
         self.unwrapped.sample_sequence = sample_sequence
         self.goal_seq = None
         self.num_reached = 0
-        self.propositions = set(env.unwrapped.get_propositions())
+        self.propositions = set(env.get_propositions())
         self.partial_reward = partial_reward
         self.obs = None
         self.info = None
@@ -199,7 +199,7 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
 
     def __init__(self, env: gymnasium.Env, sample_sequence: Callable[[], LDBASequence], partial_reward=False):
         super().__init__(env)
-        self.region_order = env.unwrapped.get_propositions()
+        self.region_order = env.get_propositions()
         if "SAR" in env.spec.id:
             self.agent_obs_keys = SAR_AGENT_OBS_KEYS
             lidar_bins = sar_task(env).lidar_conf.num_bins

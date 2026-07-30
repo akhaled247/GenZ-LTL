@@ -126,7 +126,7 @@ def build_model_safety(
         env_net = None
         env_embedding_dim = obs_shape[0]
 
-    # ltl_net.embedding_dim = 2*len(env.unwrapped.get_propositions()) # emb / no_ltl_emb_one_hot
+    # ltl_net.embedding_dim = 2*len(env.get_propositions()) # emb / no_ltl_emb_one_hot
     if isinstance(env.action_space, gymnasium.spaces.Discrete):
         actor = DiscreteActor(action_dim=action_dim,
                               layers=[env_embedding_dim, *model_config.actor.layers],

@@ -12,9 +12,9 @@ import simple_parsing
 class Args:
   script: str  # train_ppo | train_rco
   name: str
-  env: str = 'PointLTL0MASAR1WC-v0'
   curriculum: str
   model_config: str
+  env: str = 'PointLTL0MASAR1WC-v0'
   seed: int | list[int] = 0
   num_seeds: int | None = None  # if set, runs seeds 0 .. num_seeds-1
   device: str = 'cuda:1'
