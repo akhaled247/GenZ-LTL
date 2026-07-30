@@ -1,18 +1,15 @@
-"""Canonical SAR SA→MA deploy package (paper §5.3)."""
-from deploy.coordinator import MultiAgentSARCoordinator
-from deploy.ma_rollout import simulate_ma_sar
-from deploy.feature_recipe import (
-    FEAT_RECIPE_LEGACY_V0,
-    allow_legacy_padding,
-    ensure_deploy_meta,
-    resolve_feat_shape,
-)
+"""Canonical SAR SA→MA deploy package (paper §5.3).
+
+Import submodules directly to avoid circular imports, e.g.:
+  from deploy.feature_recipe import ensure_deploy_meta
+  from deploy.coordinator import MultiAgentSARCoordinator
+  from deploy.ma_rollout import simulate_ma_sar
+"""
 
 __all__ = [
-    "MultiAgentSARCoordinator",
-    "simulate_ma_sar",
-    "FEAT_RECIPE_LEGACY_V0",
-    "allow_legacy_padding",
-    "ensure_deploy_meta",
-    "resolve_feat_shape",
+    "feature_recipe",
+    "coordinator",
+    "ma_rollout",
+    "loading",
+    "env_check",
 ]

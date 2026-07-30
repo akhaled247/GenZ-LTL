@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 import preprocessing
-from envs.sar_deploy import resolve_sar_feat_shape, sar_preprocess_for_deploy
+from deploy.feature_recipe import resolve_feat_shape, sar_preprocess_for_deploy
 from envs.seq_wrapper import sar_task
 from model.model import Model
 from sequence.search import SequenceSearch
@@ -59,7 +59,7 @@ class Agent:
     def forward(self, obs, deterministic=False) -> np.ndarray:
         if self.sequence is not None:
             reach, avoid = self.sequence[0]
-            feat_shape = resolve_sar_feat_shape(
+            feat_shape = resolve_feat_shape(
                 self.model, sar_task(self.env).lidar_conf.num_bins,
             )
             if tuple(obs["features"].shape) != feat_shape:

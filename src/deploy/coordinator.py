@@ -8,7 +8,6 @@ import numpy as np
 
 from deploy.feature_recipe import sar_preprocess_for_deploy
 from ltl.logic import Assignment
-from model.agent import Agent
 from sequence.search import SequenceSearch
 
 
@@ -24,6 +23,8 @@ class MultiAgentSARCoordinator:
         num_agents: int,
         verbose: bool = False,
     ):
+        from model.agent import Agent
+
         self.env = env
         self.model = model
         self.search = search
