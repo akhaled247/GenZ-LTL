@@ -1,10 +1,18 @@
+import os
 import subprocess
 
-RABINIZER_PATH = 'rabinizer4/bin/ltl2ldba'
+_GENZ_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+RABINIZER_PATH = os.path.join(_GENZ_ROOT, "rabinizer4", "bin", "ltl2ldba")
 
 
 def run_rabinizer(formula: str) -> str:
     """Convert an LTL formula to a LDBA in the HOA format."""
+    if not os.path.isfile(RABINIZER_PATH):
+        raise FileNotFoundError(f"Rabinizer not found at {RABINIZER_PATH}")
+    if not os.access(RABINIZER_PATH, os.X_OK):
+        raise PermissionError(
+            f"Rabinizer not executable: {RABINIZER_PATH} — run: chmod +x {RABINIZER_PATH}"
+        )
     # -p: parallel processing
     # -d: construct a non-generalised Buechi automaton
     # -e: keep generated epsilon transitions

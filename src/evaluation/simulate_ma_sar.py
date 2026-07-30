@@ -8,17 +8,30 @@ from tqdm import tqdm
 
 from envs import make_env_safety
 from envs.env_utils import get_env_attr
-from envs.seq_wrapper import sar_feat_dim, sar_task
+from envs.sar_deploy import (
+    check_rabinizer,
+    ma_episode_success,
+    ma_episode_violation,
+    sar_preprocess_for_deploy,
+)
+from envs.seq_wrapper import sar_task
 from ltl import FixedSampler
 from model.model import build_model_safety
 from model.agent import Agent
 from config import model_configs
 from sequence.search import ExhaustiveSearchSafety, NoPathsException
+from utils.deploy_meta import (
+    MA_EVAL_ENV_DEFAULT,
+    MA_EVAL_FORMULA_DEFAULT,
+    build_deploy_meta,
+    load_deploy_meta,
+    save_deploy_meta,
+)
 from utils.model_store import ModelStore
 import argparse
 
 TRAIN_ENV = 'PointLTL0MASAR1WC-v0'
-EVAL_ENV = 'PointLTL0MASAR2WC-v0'
+EVAL_ENV = MA_EVAL_ENV_DEFAULT
 
 
 class MultiAgentSARAgent:
@@ -72,16 +85,14 @@ class MultiAgentSARAgent:
 
         assert self.sequence is not None
         reach, avoid = self.sequence[0]
-        feat_shape = None
-        if hasattr(self.model, "input_feat_dim"):
-            feat_shape = (int(self.model.input_feat_dim),)
         actions = {}
         for agent_idx in range(self.num_agents):
             obs_i = copy.deepcopy(obs)
             obs_i['goal'] = self.sequence
-            obs_i['features'] = self.env.pre_process_obs_sar(
-                reach, avoid, agent_idx=agent_idx, feat_shape=feat_shape,
+            obs_i['features'] = sar_preprocess_for_deploy(
+                self.env, self.model, reach, avoid, agent_idx=agent_idx,
             )
+            self._forward_agent.agent_idx = agent_idx
             action = self._forward_agent.forward(obs_i, deterministic).flatten()
             actions[f'agent_{agent_idx}'] = action
         return actions
@@ -98,9 +109,29 @@ def simulate_ma_sar(
         render: bool,
         deterministic: bool = True,
 ):
+    check_rabinizer()
+
     random.seed(seed)
     np.random.seed(seed)
     torch.random.manual_seed(seed)
+
+    model_store = ModelStore(train_env, exp, seed, None)
+    training_status = model_store.load_training_status(map_location='cpu')
+    deploy_meta = load_deploy_meta(model_store.path)
+    if deploy_meta is None:
+        from model.model import infer_model_safety_shapes
+        inferred = infer_model_safety_shapes(training_status["model_state"])
+        deploy_meta = build_deploy_meta(
+            train_env=train_env,
+            raw_feature_dim=int(inferred["feature_dim"]),
+            use_env_net=bool(inferred["use_env_net"]),
+            actor_input_dim=int(inferred["embedding_dim"]),
+        )
+        save_deploy_meta(model_store.path, deploy_meta)
+    if deploy_meta is not None and formula == MA_EVAL_FORMULA_DEFAULT:
+        formula = deploy_meta.get("ma_eval_formula", formula)
+    if deploy_meta is not None and eval_env == EVAL_ENV:
+        eval_env = deploy_meta.get("eval_env", eval_env)
 
     sampler = FixedSampler.partial(formula)
     env = make_env_safety(
@@ -108,15 +139,15 @@ def simulate_ma_sar(
         render_mode='human' if render else None,
     )
     num_agents = getattr(sar_task(env), 'agent_num', 2)
+    agent_keys = [f'agent_{i}' for i in range(num_agents)]
 
     config = model_configs[train_env]
-    model_store = ModelStore(train_env, exp, seed, None)
     training_status = model_store.load_training_status(map_location='cpu')
-    # FixedSampler returns LTL strings — use sequence=False (not SequenceSafetyWrapper).
-    # Shapes come from checkpoint; no reset needed for build_model_safety.
     probe_env = make_env_safety(train_env, sampler, flat=True, sequence=False)
     try:
-        model = build_model_safety(probe_env, training_status, config)
+        model = build_model_safety(
+            probe_env, training_status, config, deploy_meta=deploy_meta,
+        )
     finally:
         probe_env.close()
     props = get_env_attr(env, 'get_propositions')()
@@ -134,7 +165,7 @@ def simulate_ma_sar(
         pbar = tqdm(pbar)
 
     for i in pbar:
-        obs, info = env.reset(seed=seed), {}
+        obs, info = env.reset(seed=seed + i), {}
         if render:
             print(obs['goal'])
         agent.reset()
@@ -150,11 +181,13 @@ def simulate_ma_sar(
             obs, reward, done, info = env.step(action)
             num_steps += 1
             if done:
-                final_reward = int('success' in info)
-                if 'success' in info:
+                success = ma_episode_success(info, agent_keys)
+                violation = ma_episode_violation(info, agent_keys)
+                final_reward = int(success)
+                if success:
                     num_successes += 1
                     steps.append(num_steps)
-                elif 'violation' in info:
+                elif violation:
                     num_violations += 1
                 rets.append(final_reward * gamma ** (num_steps - 1))
                 if not render:
@@ -184,7 +217,7 @@ def main():
     parser.add_argument('--exp', type=str, default='GenZ-LTL')
     parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--num_episodes', type=int, default=100)
-    parser.add_argument('--formula', type=str, default='(!surface_0 U entrapped_0) & F surface_0')
+    parser.add_argument('--formula', type=str, default=MA_EVAL_FORMULA_DEFAULT)
     parser.add_argument('--render', action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument('--deterministic', action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args()

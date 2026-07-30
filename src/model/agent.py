@@ -2,6 +2,8 @@ import numpy as np
 import torch
 
 import preprocessing
+from envs.sar_deploy import resolve_sar_feat_shape, sar_preprocess_for_deploy
+from envs.seq_wrapper import sar_task
 from model.model import Model
 from sequence.search import SequenceSearch
 from ltl.automata import LDBASequence
@@ -55,16 +57,16 @@ class Agent:
         return self.forward(obs, deterministic)
 
     def forward(self, obs, deterministic=False) -> np.ndarray:
-        
         if self.sequence is not None:
             reach, avoid = self.sequence[0]
-            if hasattr(self.env, 'pre_process_obs_sar'):
-                obs["features"] = self.env.pre_process_obs_sar(reach, avoid)
-            elif len(obs["features"].shape) == 1:
-                obs["features"] = self.env.pre_process_obs_zones(reach, avoid)
-            else:
-                obs["features"] = self.env.pre_process_obs_letter(reach, avoid)
-        
+            feat_shape = resolve_sar_feat_shape(
+                self.model, sar_task(self.env).lidar_conf.num_bins,
+            )
+            if tuple(obs["features"].shape) != feat_shape:
+                obs["features"] = sar_preprocess_for_deploy(
+                    self.env, self.model, reach, avoid,
+                    agent_idx=getattr(self, "agent_idx", 0),
+                )
         if not (isinstance(obs, list) or isinstance(obs, tuple)):
             obs = [obs]
         preprocessed = preprocessing.preprocess_obss(obs, self.propositions)

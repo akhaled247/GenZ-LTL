@@ -161,17 +161,36 @@ def build_model_safety(
         env: gymnasium.Env,
         training_status: dict[str, Any],
         model_config: ModelSafetyConfig,
+        deploy_meta: dict[str, Any] | None = None,
 ) -> ModelSafety:
     state_dict = training_status.get("model_state")
     inferred = infer_model_safety_shapes(state_dict) if state_dict else None
 
+    if deploy_meta is not None:
+        raw_feature_dim = int(deploy_meta["raw_feature_dim"])
+        use_env_net_meta = bool(deploy_meta["use_env_net"])
+        actor_input_dim = int(deploy_meta["actor_input_dim"])
+        if inferred is not None:
+            inferred = dict(inferred)
+            inferred["feature_dim"] = raw_feature_dim
+            inferred["use_env_net"] = use_env_net_meta
+            inferred["embedding_dim"] = actor_input_dim
+    elif inferred is not None:
+        raw_feature_dim = int(inferred["feature_dim"])
+        use_env_net_meta = inferred["use_env_net"]
+        actor_input_dim = int(inferred["embedding_dim"])
+    else:
+        raw_feature_dim = int(env.observation_space['features'].shape[0])
+        use_env_net_meta = model_config.env_net is not None
+        actor_input_dim = raw_feature_dim
+
     if inferred is not None:
-        obs_shape = (inferred["feat_dim"],)
+        obs_shape = (inferred["feat_dim"],) if inferred.get("use_env_net") else (raw_feature_dim,)
         env_embedding_dim = inferred["embedding_dim"]
         action_dim = inferred["action_dim"]
         actor_hidden = inferred["actor_hidden"] or list(model_config.actor.layers)
     else:
-        obs_shape = env.observation_space['features'].shape
+        obs_shape = (raw_feature_dim,)
         env_embedding_dim = int(obs_shape[0])
         action_dim = (
             env.action_space.n
@@ -181,7 +200,7 @@ def build_model_safety(
         actor_hidden = list(model_config.actor.layers)
 
     env_net = None
-    use_env_net = inferred.get("use_env_net", True) if inferred is not None else True
+    use_env_net = inferred.get("use_env_net", True) if inferred is not None else use_env_net_meta
     if model_config.env_net is not None and use_env_net:
         if inferred is not None and inferred["env_net_layers"] is not None:
             env_net_cfg = StandardNetConfig(
@@ -232,6 +251,6 @@ def build_model_safety(
 
     if state_dict is not None:
         model_safety.load_state_dict(state_dict, strict=use_env_net)
-    if inferred is not None:
-        model_safety.input_feat_dim = int(inferred["feature_dim"])
+    model_safety.raw_feature_dim = raw_feature_dim
+    model_safety.input_feat_dim = raw_feature_dim  # legacy alias for MA eval scripts
     return model_safety

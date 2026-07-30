@@ -25,6 +25,7 @@ from utils.logging.multi_logger import MultiLogger
 from utils.logging.text_logger import TextLogger
 from utils.logging.wandb_logger import WandbLogger
 from utils.model_store import ModelStore
+from utils.deploy_meta import build_deploy_meta
 from config import *
 
 
@@ -105,10 +106,26 @@ class Trainer:
                                    "num_eval_steps": num_eval_steps,
                                    }
                 self.model_store.save_training_status(training_status)
+                self.write_deploy_meta(algo.model)
                 self.text_logger.info("Saved training status")
             if curriculum.finished:
                 self.text_logger.important_info("Finished curriculum.")
                 break
+
+    def write_deploy_meta(self, model) -> None:
+        actor_input_dim = int(model.actor.enc[0].in_features)
+        use_env_net = model.env_net is not None
+        raw_feature_dim = (
+            int(model.env_net.mlp[0].in_features) if use_env_net else actor_input_dim
+        )
+        meta = build_deploy_meta(
+            train_env=self.args.experiment.env,
+            raw_feature_dim=raw_feature_dim,
+            use_env_net=use_env_net,
+            actor_input_dim=actor_input_dim,
+        )
+        path = self.model_store.save_deploy_meta(meta)
+        self.text_logger.info(f"Wrote deploy metadata to {path}")
 
     def make_probe_env(self, curriculum_stage: int) -> gymnasium.Env:
         curriculum = curricula[self.args.curriculum]

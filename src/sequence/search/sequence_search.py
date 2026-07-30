@@ -4,6 +4,7 @@ import torch
 from torch import nn
 
 import preprocessing
+from envs.sar_deploy import sar_preprocess_for_deploy
 from ltl.automata import LDBA, LDBASequence, LDBATransition
 
 
@@ -30,13 +31,9 @@ class SequenceSearch(ABC):
     def get_value_safety(self, seq: LDBASequence, obs) -> float:
         obs['goal'] = seq
         reach, avoid = seq[0]
-        if hasattr(self.env, 'pre_process_obs_sar'):
-            obs["features"] = self.env.pre_process_obs_sar(reach, avoid)
-        elif len(obs["features"].shape) == 1:
-            obs["features"] = self.env.pre_process_obs_zones(reach, avoid)
-        else:
-            obs["features"] = self.env.pre_process_obs_letter(reach, avoid)
-        
+        obs["features"] = sar_preprocess_for_deploy(
+            self.env, self.model, reach, avoid, agent_idx=0,
+        )
         if not (isinstance(obs, list) or isinstance(obs, tuple)):
             obs = [obs]
         preprocessed = preprocessing.preprocess_obss(obs, self.propositions)
