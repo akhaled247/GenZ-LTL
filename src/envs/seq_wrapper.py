@@ -121,7 +121,7 @@ class SequenceWrapper(gymnasium.Wrapper):
         self.unwrapped.sample_sequence = sample_sequence
         self.goal_seq = None
         self.num_reached = 0
-        self.propositions = set(env.unwrapped.get_propositions())
+        self.propositions = set(env.get_propositions())
         self.partial_reward = partial_reward
         self.obs = None
         self.info = None
