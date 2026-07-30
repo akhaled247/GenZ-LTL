@@ -7,7 +7,7 @@ from typing import Any
 
 from envs.seq_wrapper import sar_feat_dim, sar_task
 
-GENZ_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+GENZ_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 RABINIZER_REL = os.path.join("rabinizer4", "bin", "ltl2ldba")
 
 
