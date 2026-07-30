@@ -60,8 +60,8 @@ env_to_tasks = {
         '(!surface_0 U entrapped_0) & F surface_0',
         '(!surface_1 U entrapped_1) & F surface_1',
         '((!surface_0 U entrapped_0) & F surface_0) & ((!surface_1 U entrapped_1) & F surface_1)',
-        '((!surface_0 & !surface_1) U all_entrapped) & F all_surface',
         '((!surface_0 & !surface_1) U all_entrapped) & (F surface_0 & F surface_1)',
+        '((!surface_0 & !surface_1) U all_entrapped) & F all_surface',
         '(!entrapped_0 U surface_0) & (!entrapped_1 U surface_1) & F (surface_0 & surface_1)',
     ],
 }
