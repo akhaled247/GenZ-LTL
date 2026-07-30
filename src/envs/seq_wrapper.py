@@ -7,6 +7,7 @@ from gymnasium.core import WrapperObsType, WrapperActType
 
 from ltl.automata import LDBASequence
 from ltl.logic import Assignment, FrozenAssignment
+from envs.env_utils import find_builder, get_env_attr
 
 SAR_AGENT_OBS_KEYS = [
     "accelerometer_0", "velocimeter_0", "gyro_0",
@@ -199,7 +200,7 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
 
     def __init__(self, env: gymnasium.Env, sample_sequence: Callable[[], LDBASequence], partial_reward=False):
         super().__init__(env)
-        self.region_order = env.unwrapped.get_propositions()
+        self.region_order = get_env_attr(env, 'get_propositions')()
         if "SAR" in env.spec.id:
             self.agent_obs_keys = SAR_AGENT_OBS_KEYS
             lidar_bins = sar_task(env).lidar_conf.num_bins
@@ -242,6 +243,10 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
             cost = 1.0; terminated = True
         elif info.get('cost', 0) > 0:
             cost = 1.0; terminated = True
+
+        builder = find_builder(self.env)
+        if builder is not None and getattr(builder, "terminated", False):
+            terminated = True
         
         obs = self.pre_process_obs(reach, avoid)
         obs = self.complete_observation_current(obs, info)

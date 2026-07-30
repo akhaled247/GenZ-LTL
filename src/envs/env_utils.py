@@ -15,6 +15,16 @@ def get_env_attr(env, attr: str):
         raise AttributeError(f'Attribute {attr} not found in env.')
 
 
+def find_builder(env: gymnasium.Env):
+    """Walk wrappers to SpecRLBench MA Builder (has ``done`` + ``task``)."""
+    cur: gymnasium.Env | None = env
+    seen: set[int] = set()
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if hasattr(cur, "done") and hasattr(cur, "task") and hasattr(cur, "terminated"):
+            return cur
+        cur = getattr(cur, "env", None)
+    return None
 def make_env(
         name: str,
         sampler: Callable[[list[str]], Callable],
