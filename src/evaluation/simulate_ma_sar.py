@@ -72,12 +72,15 @@ class MultiAgentSARAgent:
 
         assert self.sequence is not None
         reach, avoid = self.sequence[0]
+        feat_shape = None
+        if hasattr(self.model, "input_feat_dim"):
+            feat_shape = (int(self.model.input_feat_dim),)
         actions = {}
         for agent_idx in range(self.num_agents):
             obs_i = copy.deepcopy(obs)
             obs_i['goal'] = self.sequence
             obs_i['features'] = self.env.pre_process_obs_sar(
-                reach, avoid, agent_idx=agent_idx,
+                reach, avoid, agent_idx=agent_idx, feat_shape=feat_shape,
             )
             action = self._forward_agent.forward(obs_i, deterministic).flatten()
             actions[f'agent_{agent_idx}'] = action

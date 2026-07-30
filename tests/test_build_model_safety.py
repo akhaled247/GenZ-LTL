@@ -43,6 +43,20 @@ def test_infer_model_safety_shapes_env_net_96_embedding():
     shapes = infer_model_safety_shapes(state)
     assert shapes["feat_dim"] == 64
     assert shapes["embedding_dim"] == 96
+    assert shapes["feature_dim"] == 96
+    assert shapes["use_env_net"] is True
     assert shapes["env_net_layers"] == [128, 96]
     assert shapes["action_dim"] == 2
     assert shapes["actor_hidden"] == [64, 64, 64]
+
+
+def test_infer_model_safety_shapes_skips_env_net_when_output_mismatch():
+    state = _fake_safety_state_dict(feat_dim=96, env_net_layers=[128, 64])
+    state["actor.enc.0.weight"] = torch.zeros(64, 96)
+    state["critic.0.weight"] = torch.zeros(64, 96)
+    state["cost_critic.0.weight"] = torch.zeros(64, 96)
+    state["lagrangian_net.0.weight"] = torch.zeros(64, 96)
+    shapes = infer_model_safety_shapes(state)
+    assert shapes["use_env_net"] is False
+    assert shapes["feature_dim"] == 96
+    assert shapes["env_net_layers"] is None

@@ -72,6 +72,27 @@ def sar_agent_obs_keys(agent_idx: int = 0) -> list[str]:
     return [k.rsplit("_", 1)[0] + suffix for k in SAR_AGENT_OBS_KEYS]
 
 
+def _sar_legacy_feature_tail(
+    original_obs: dict,
+    used_keys: set[str],
+    needed: int,
+) -> np.ndarray:
+    """Append leftover per-agent dict fields to match legacy checkpoint feature width."""
+    if needed <= 0:
+        return np.empty((0,), dtype=np.float32)
+    parts = []
+    for key in sorted(original_obs.keys()):
+        if key in used_keys:
+            continue
+        parts.append(np.ravel(np.asarray(original_obs[key], dtype=np.float32)))
+    if not parts:
+        return np.zeros(needed, dtype=np.float32)
+    extra = np.concatenate(parts).astype(np.float32)
+    if extra.size >= needed:
+        return extra[:needed]
+    return np.concatenate([extra, np.zeros(needed - extra.size, dtype=np.float32)])
+
+
 def pre_process_obs_sar(
         env: gymnasium.Env,
         agent_obs_keys: list[str],
@@ -83,6 +104,15 @@ def pre_process_obs_sar(
     original_obs = sar_agent_obs(env, agent_idx)
     lidar_dim = sar_task(env).lidar_conf.num_bins
     num_agents = getattr(sar_task(env), "agent_num", 1)
+    used_keys = set(agent_obs_keys)
+    used_keys.add(buildings_lidar_key(agent_idx))
+    for assignment in reach:
+        for prop in assignment.to_string():
+            used_keys.update(lidar_keys_for_prop(prop, agent_idx, num_agents))
+    for assignment in avoid:
+        for prop in assignment.to_string():
+            if prop:
+                used_keys.update(lidar_keys_for_prop(prop, agent_idx, num_agents))
     agent_obs = np.concatenate([
         original_obs[k].flatten() if np.ndim(original_obs[k]) > 1 else original_obs[k]
         for k in agent_obs_keys
@@ -96,6 +126,12 @@ def pre_process_obs_sar(
         original_obs, avoid, lidar_dim, agent_idx=agent_idx, num_agents=num_agents,
     )
     obs = np.concatenate([agent_obs, buildings_obs, reach_obs, avoid_obs]).astype(np.float32)
+    target = int(feat_shape[0])
+    if obs.shape[0] < target:
+        obs = np.concatenate([
+            obs,
+            _sar_legacy_feature_tail(original_obs, used_keys, target - obs.shape[0]),
+        ])
     assert obs.shape == feat_shape, f"obs.shape = {obs.shape}, expected {feat_shape}"
     return obs
 

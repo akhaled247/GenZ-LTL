@@ -39,23 +39,23 @@ def infer_model_safety_shapes(state_dict: dict[str, Any]) -> dict[str, Any]:
 
     env_net_layers: list[int] | None = None
     feat_dim = actor_in
+    use_env_net = False
     if "env_net.mlp.0.weight" in state_dict:
         env_linears = _linear_layers_from_mlp_prefix(state_dict, "env_net.mlp")
         feat_dim = env_linears[0][1]
         env_net_layers = [out for out, _in in env_linears]
-        embedding_dim = env_linears[-1][0]
-    else:
-        embedding_dim = actor_in
+        env_net_out = env_linears[-1][0]
+        use_env_net = env_net_out == actor_in
 
-    if embedding_dim != actor_in:
-        raise ValueError(
-            f"Checkpoint env_net output {embedding_dim} != actor input {actor_in}"
-        )
+    embedding_dim = actor_in
+    feature_dim = feat_dim if use_env_net else actor_in
 
     return {
         "feat_dim": feat_dim,
+        "feature_dim": feature_dim,
         "embedding_dim": embedding_dim,
-        "env_net_layers": env_net_layers,
+        "env_net_layers": env_net_layers if use_env_net else None,
+        "use_env_net": use_env_net,
         "action_dim": action_dim,
         "actor_hidden": actor_hidden,
     }
@@ -181,7 +181,8 @@ def build_model_safety(
         actor_hidden = list(model_config.actor.layers)
 
     env_net = None
-    if model_config.env_net is not None:
+    use_env_net = inferred.get("use_env_net", True) if inferred is not None else True
+    if model_config.env_net is not None and use_env_net:
         if inferred is not None and inferred["env_net_layers"] is not None:
             env_net_cfg = StandardNetConfig(
                 layers=inferred["env_net_layers"],
@@ -230,5 +231,7 @@ def build_model_safety(
     model_safety = ModelSafety(actor, critic, cost_critic, lagrangian_net, env_net)
 
     if state_dict is not None:
-        model_safety.load_state_dict(state_dict)
+        model_safety.load_state_dict(state_dict, strict=use_env_net)
+    if inferred is not None:
+        model_safety.input_feat_dim = int(inferred["feature_dim"])
     return model_safety

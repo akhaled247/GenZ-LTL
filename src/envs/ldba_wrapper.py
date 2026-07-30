@@ -218,9 +218,11 @@ class LDBAWrapper(gymnasium.Wrapper):
             reach: frozenset[FrozenAssignment],
             avoid: frozenset[FrozenAssignment],
             agent_idx: int = 0,
+            feat_shape: tuple[int, ...] | None = None,
     ) -> np.ndarray:
         keys = sar_agent_obs_keys(agent_idx)
-        feat_shape = (sar_feat_dim(sar_task(self.env).lidar_conf.num_bins),)
+        if feat_shape is None:
+            feat_shape = (sar_feat_dim(sar_task(self.env).lidar_conf.num_bins),)
         return pre_process_obs_sar(
             self.env, keys, reach, avoid, feat_shape, agent_idx=agent_idx,
         )
