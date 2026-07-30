@@ -100,14 +100,20 @@ def simulate_ma_sar(
     torch.random.manual_seed(seed)
 
     sampler = FixedSampler.partial(formula)
-    env = make_env_safety(eval_env, sampler, flat=False, render_mode='human' if render else None)
+    env = make_env_safety(
+        eval_env, sampler, flat=False,
+        render_mode='human' if render else None,
+    )
     num_agents = getattr(sar_task(env), 'agent_num', 2)
 
     config = model_configs[train_env]
     model_store = ModelStore(train_env, exp, seed, None)
     training_status = model_store.load_training_status(map_location='cpu')
-    probe_env = make_env_safety(train_env, sampler, flat=True)
+    probe_env = make_env_safety(
+        train_env, sampler, flat=True, sequence=True, max_steps=2500,
+    )
     try:
+        probe_env.reset(seed=seed)
         model = build_model_safety(probe_env, training_status, config)
     finally:
         probe_env.close()
