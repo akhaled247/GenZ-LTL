@@ -253,4 +253,12 @@ def build_model_safety(
         model_safety.load_state_dict(state_dict, strict=use_env_net)
     model_safety.raw_feature_dim = raw_feature_dim
     model_safety.input_feat_dim = raw_feature_dim  # legacy alias for MA eval scripts
+    from deploy.feature_recipe import infer_feat_recipe
+    from envs.seq_wrapper import sar_task
+
+    lidar_bins = sar_task(env).lidar_conf.num_bins
+    if deploy_meta is not None:
+        model_safety.feat_recipe = deploy_meta.get("feat_recipe", "sar_v1")
+    else:
+        model_safety.feat_recipe = infer_feat_recipe(raw_feature_dim, lidar_bins)
     return model_safety

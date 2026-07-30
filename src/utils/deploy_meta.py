@@ -12,6 +12,7 @@ MA_EVAL_FORMULA_DEFAULT = (
     "& ((!surface_1 U entrapped_1) & F surface_1)"
 )
 FEAT_RECIPE_SAR_V1 = "sar_v1"
+FEAT_RECIPE_LEGACY_V0 = "legacy_v0"
 
 
 def deploy_meta_path(experiment_dir: str) -> str:

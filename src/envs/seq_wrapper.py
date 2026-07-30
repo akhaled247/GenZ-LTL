@@ -100,6 +100,7 @@ def pre_process_obs_sar(
         avoid: frozenset[FrozenAssignment],
         feat_shape: tuple[int, ...],
         agent_idx: int = 0,
+        allow_legacy_padding: bool = False,
 ) -> np.ndarray:
     original_obs = sar_agent_obs(env, agent_idx)
     lidar_dim = sar_task(env).lidar_conf.num_bins
@@ -128,6 +129,11 @@ def pre_process_obs_sar(
     obs = np.concatenate([agent_obs, buildings_obs, reach_obs, avoid_obs]).astype(np.float32)
     target = int(feat_shape[0])
     if obs.shape[0] < target:
+        if not allow_legacy_padding:
+            raise ValueError(
+                f"SAR feature dim {obs.shape[0]} < checkpoint width {target}. "
+                "Set deploy_meta feat_recipe=legacy_v0 for old checkpoints or retrain."
+            )
         obs = np.concatenate([
             obs,
             _sar_legacy_feature_tail(original_obs, used_keys, target - obs.shape[0]),

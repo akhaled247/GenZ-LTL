@@ -1,10 +1,12 @@
 from abc import ABC, abstractmethod
 
+import copy
+
 import torch
 from torch import nn
 
 import preprocessing
-from envs.sar_deploy import sar_preprocess_for_deploy
+from deploy.feature_recipe import sar_preprocess_for_deploy
 from ltl.automata import LDBA, LDBASequence, LDBATransition
 
 
@@ -28,18 +30,27 @@ class SequenceSearch(ABC):
         return value.item()
     
     # for rco
-    def get_value_safety(self, seq: LDBASequence, obs) -> float:
-        obs['goal'] = seq
+    def _value_safety_for_agent(self, seq: LDBASequence, obs, agent_idx: int) -> float:
+        obs_i = copy.deepcopy(obs)
+        obs_i["goal"] = seq
         reach, avoid = seq[0]
-        obs["features"] = sar_preprocess_for_deploy(
-            self.env, self.model, reach, avoid, agent_idx=0,
+        obs_i["features"] = sar_preprocess_for_deploy(
+            self.env, self.model, reach, avoid, agent_idx=agent_idx,
         )
-        if not (isinstance(obs, list) or isinstance(obs, tuple)):
-            obs = [obs]
-        preprocessed = preprocessing.preprocess_obss(obs, self.propositions)
+        batch = [obs_i]
+        preprocessed = preprocessing.preprocess_obss(batch, self.propositions)
         with torch.no_grad():
             _, value, cost_value, lag = self.model(preprocessed, collect=False)
         return value.item() - lag.item() * cost_value.item()
+
+    def get_value_safety(self, seq: LDBASequence, obs) -> float:
+        num_agents = getattr(self, "num_agents", 1)
+        if num_agents <= 1:
+            return self._value_safety_for_agent(seq, obs, 0)
+        return min(
+            self._value_safety_for_agent(seq, obs, agent_idx)
+            for agent_idx in range(num_agents)
+        )
 
     @staticmethod
     def collect_avoid_transitions(ldba: LDBA, state: int, visited_ldba_states: set[int]) -> set[LDBATransition]:

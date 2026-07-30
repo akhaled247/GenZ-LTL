@@ -25,7 +25,9 @@ from utils.logging.multi_logger import MultiLogger
 from utils.logging.text_logger import TextLogger
 from utils.logging.wandb_logger import WandbLogger
 from utils.model_store import ModelStore
+from envs.seq_wrapper import sar_task
 from utils.deploy_meta import build_deploy_meta
+from deploy.feature_recipe import infer_feat_recipe
 from config import *
 
 
@@ -106,23 +108,25 @@ class Trainer:
                                    "num_eval_steps": num_eval_steps,
                                    }
                 self.model_store.save_training_status(training_status)
-                self.write_deploy_meta(algo.model)
+                self.write_deploy_meta(algo.model, envs[0])
                 self.text_logger.info("Saved training status")
             if curriculum.finished:
                 self.text_logger.important_info("Finished curriculum.")
                 break
 
-    def write_deploy_meta(self, model) -> None:
+    def write_deploy_meta(self, model, env) -> None:
         actor_input_dim = int(model.actor.enc[0].in_features)
         use_env_net = model.env_net is not None
         raw_feature_dim = (
             int(model.env_net.mlp[0].in_features) if use_env_net else actor_input_dim
         )
+        lidar_bins = sar_task(env).lidar_conf.num_bins
         meta = build_deploy_meta(
             train_env=self.args.experiment.env,
             raw_feature_dim=raw_feature_dim,
             use_env_net=use_env_net,
             actor_input_dim=actor_input_dim,
+            feat_recipe=infer_feat_recipe(raw_feature_dim, lidar_bins),
         )
         path = self.model_store.save_deploy_meta(meta)
         self.text_logger.info(f"Wrote deploy metadata to {path}")

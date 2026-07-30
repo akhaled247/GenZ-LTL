@@ -1,10 +1,15 @@
-"""SAR deploy helpers: feature width, Rabinizer preflight, MA episode helpers."""
+"""SAR deploy helpers: Rabinizer preflight, MA episode helpers (re-exports deploy recipe)."""
 from __future__ import annotations
 
 import os
 import subprocess
 from typing import Any
 
+from deploy.feature_recipe import (
+    allow_legacy_padding,
+    resolve_feat_shape,
+    sar_preprocess_for_deploy,
+)
 from envs.seq_wrapper import sar_feat_dim, sar_task
 
 GENZ_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -19,35 +24,8 @@ def rabinizer_path() -> str:
     return os.path.join(GENZ_ROOT, RABINIZER_REL)
 
 
-def sar_preprocess_for_deploy(
-    env: Any,
-    model: Any,
-    reach: Any,
-    avoid: Any,
-    *,
-    agent_idx: int = 0,
-) -> Any:
-    """Build SAR feature vector at deploy width (checkpoint / deploy_meta)."""
-    lidar_bins = sar_task(env).lidar_conf.num_bins
-    feat_shape = resolve_sar_feat_shape(model, lidar_bins)
-    if hasattr(env, "pre_process_obs_sar"):
-        return env.pre_process_obs_sar(
-            reach, avoid, agent_idx=agent_idx, feat_shape=feat_shape,
-        )
-    if hasattr(env, "pre_process_obs_zones"):
-        return env.pre_process_obs_zones(reach, avoid)
-    return env.pre_process_obs_letter(reach, avoid)
-
-
 def resolve_sar_feat_shape(model: Any, lidar_bins: int) -> tuple[int, ...]:
-    """Feature vector width for ``pre_process_obs_sar`` (before optional env_net)."""
-    raw = getattr(model, "raw_feature_dim", None)
-    if raw is not None:
-        return (int(raw),)
-    legacy = getattr(model, "input_feat_dim", None)
-    if legacy is not None:
-        return (int(legacy),)
-    return (sar_feat_dim(lidar_bins),)
+    return resolve_feat_shape(model, lidar_bins)
 
 
 def check_rabinizer() -> None:

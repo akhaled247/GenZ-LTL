@@ -24,12 +24,16 @@ def test_resolve_sar_feat_shape_legacy_input_feat_dim():
 def test_sar_preprocess_for_deploy_passes_feat_shape():
     env = MagicMock()
     env.pre_process_obs_sar.return_value = np.zeros(96, dtype=np.float32)
-    model = SimpleNamespace(raw_feature_dim=96)
+    model = SimpleNamespace(raw_feature_dim=96, feat_recipe="legacy_v0")
     task = SimpleNamespace(lidar_conf=SimpleNamespace(num_bins=10))
-    with patch("envs.sar_deploy.sar_task", return_value=task):
+    with patch("deploy.feature_recipe.sar_task", return_value=task):
         out = sar_preprocess_for_deploy(env, model, "reach", "avoid", agent_idx=1)
     env.pre_process_obs_sar.assert_called_once_with(
-        "reach", "avoid", agent_idx=1, feat_shape=(96,),
+        "reach",
+        "avoid",
+        agent_idx=1,
+        feat_shape=(96,),
+        allow_legacy_padding=True,
     )
     assert out.shape == (96,)
 

@@ -175,6 +175,8 @@ class ExhaustiveSearchSafety(SequenceSearch):
         super().__init__(model, propositions)
         self.env = env
         self.num_loops = num_loops
+        from envs.seq_wrapper import sar_task
+        self.num_agents = getattr(sar_task(env), "agent_num", 1)
 
     def __call__(self, ldba: LDBA, ldba_states: List[int], obs=None) -> LDBASequence:
         seqs = self.all_sequences(ldba, ldba_states, obs, self.num_loops)
