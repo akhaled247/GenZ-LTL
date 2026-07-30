@@ -62,7 +62,12 @@ class Agent:
             feat_shape = resolve_feat_shape(
                 self.model, sar_task(self.env).lidar_conf.num_bins,
             )
-            if tuple(obs["features"].shape) != feat_shape:
+            features = obs["features"]
+            needs_preprocess = (
+                not hasattr(features, "shape")
+                or tuple(features.shape) != feat_shape
+            )
+            if needs_preprocess:
                 obs["features"] = sar_preprocess_for_deploy(
                     self.env, self.model, reach, avoid,
                     agent_idx=getattr(self, "agent_idx", 0),
@@ -71,6 +76,7 @@ class Agent:
             obs = [obs]
         preprocessed = preprocessing.preprocess_obss(obs, self.propositions)
         with torch.no_grad():
-            dist, _, _ = self.model(preprocessed)
+            out = self.model(preprocessed)
+            dist = out[0]
             action = dist.mode if deterministic else dist.sample()
         return action.detach().numpy()

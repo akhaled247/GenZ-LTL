@@ -212,7 +212,12 @@ class ExhaustiveSearchSafety(SequenceSearch):
             raise NoPathsException()
             # return None
 
-        return max(processed_seqs, key=lambda s: self.get_value_safety([s[0]], obs))
+        return max(processed_seqs, key=lambda s: self._score_subgoal([s[0]], obs))
+
+    def _score_subgoal(self, subgoal, obs) -> float:
+        if hasattr(self.model, "cost_critic"):
+            return self.get_value_safety(subgoal, obs)
+        return self.get_value_sar(subgoal, obs)
 
     def all_sequences(self, ldba: LDBA, ldba_states: List[int], obs=None, num_loops=1) -> List[LDBASequence]:
         num_loops = 0 if ldba.is_finite_specification() else num_loops

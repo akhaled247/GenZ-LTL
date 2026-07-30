@@ -8,11 +8,13 @@ from envs import make_env, make_env_safety
 from envs.env_utils import is_safety_model_env
 from ltl import FixedSampler
 from model.model import build_model, build_model_safety
-from model.agent import Agent
 from config import model_configs
+from deploy.eval_stack import build_sar_ltl_eval_stack
 from sequence.search import ExhaustiveSearch, ExhaustiveSearchSafety, NoPathsException
 from utils.model_store import ModelStore
 import argparse
+
+from model.agent import Agent
 
 
 def main():
@@ -42,17 +44,20 @@ def simulate(env, gamma, exp, seed, num_episodes, formula, finite, render, deter
     sampler = FixedSampler.partial(formula)
     max_steps = None
     use_safety = is_safety_model_env(env_name)
-    env = make_env_safety(
-        env_name, sampler, max_steps, render_mode='human' if render else None,
-    ) if use_safety else make_env(env_name, sampler, render_mode='human' if render else None)
-    config = model_configs[env_name]
-    model_store = ModelStore(env_name, exp, seed, None)
-    training_status = model_store.load_training_status(map_location='cpu')
-    model = build_model_safety(env, training_status, config) if use_safety \
-        else build_model(env, training_status, config)
-    props = env.get_propositions()
-    search = ExhaustiveSearchSafety(env, model, props, num_loops=2) if use_safety \
-        else ExhaustiveSearch(model, props, num_loops=2)
+    if use_safety:
+        env, model, search, props, _algo = build_sar_ltl_eval_stack(
+            env_name, exp, seed, formula,
+            flat=True,
+            render_mode='human' if render else None,
+        )
+    else:
+        env = make_env(env_name, sampler, render_mode='human' if render else None)
+        config = model_configs[env_name]
+        model_store = ModelStore(env_name, exp, seed, None)
+        training_status = model_store.load_training_status(map_location='cpu')
+        model = build_model(env, training_status, config)
+        props = env.get_propositions()
+        search = ExhaustiveSearch(model, props, num_loops=2)
     agent = Agent(env, model, search=search, propositions=props, verbose=render)
 
     num_successes = 0

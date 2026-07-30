@@ -26,9 +26,32 @@ class SequenceSearch(ABC):
         if not (isinstance(obs, list) or isinstance(obs, tuple)):
             obs = [obs]
         preprocessed = preprocessing.preprocess_obss(obs, self.propositions)
-        _, value, cost_value = self.model(preprocessed)
-        return value.item()
-    
+        with torch.no_grad():
+            out = self.model(preprocessed)
+        return out[1].item()
+
+    def _value_sar_for_agent(self, seq: LDBASequence, obs, agent_idx: int) -> float:
+        obs_i = copy.deepcopy(obs)
+        obs_i["goal"] = seq
+        reach, avoid = seq[0]
+        obs_i["features"] = sar_preprocess_for_deploy(
+            self.env, self.model, reach, avoid, agent_idx=agent_idx,
+        )
+        batch = [obs_i]
+        preprocessed = preprocessing.preprocess_obss(batch, self.propositions)
+        with torch.no_grad():
+            out = self.model(preprocessed)
+        return out[1].item()
+
+    def get_value_sar(self, seq: LDBASequence, obs) -> float:
+        num_agents = getattr(self, "num_agents", 1)
+        if num_agents <= 1:
+            return self._value_sar_for_agent(seq, obs, 0)
+        return min(
+            self._value_sar_for_agent(seq, obs, agent_idx)
+            for agent_idx in range(num_agents)
+        )
+
     # for rco
     def _value_safety_for_agent(self, seq: LDBASequence, obs, agent_idx: int) -> float:
         obs_i = copy.deepcopy(obs)
