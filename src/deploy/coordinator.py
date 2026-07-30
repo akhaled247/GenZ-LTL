@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 
 from deploy.feature_recipe import sar_preprocess_for_deploy
+from deploy.ma_phase_gating import gated_reach_avoid_for_features
 from ltl.logic import Assignment
 from sequence.search import SequenceSearch
 
@@ -72,6 +73,11 @@ class MultiAgentSARCoordinator:
 
         assert self.sequence is not None
         reach, avoid = self.sequence[0]
+        reach, avoid = gated_reach_avoid_for_features(
+            self.env, reach, avoid, self.propositions,
+        )
+        if self.verbose:
+            print(f"Feature reach/avoid: {reach} | {avoid}")
         actions: dict[str, np.ndarray] = {}
         for agent_idx in range(self.num_agents):
             obs_i = copy.deepcopy(obs)
