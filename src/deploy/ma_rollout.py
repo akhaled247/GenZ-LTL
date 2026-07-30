@@ -12,7 +12,12 @@ from deploy.env_check import assert_sar_wc_paper_protocol
 from deploy.loading import load_model_for_deploy
 from envs import make_env_safety
 from envs.env_utils import get_env_attr
-from envs.sar_deploy import check_rabinizer, ma_episode_success, ma_episode_violation
+from envs.sar_deploy import (
+    check_rabinizer,
+    ma_episode_success,
+    ma_episode_violation,
+    print_ma_episode_done_debug,
+)
 from envs.seq_wrapper import sar_task
 from ltl import FixedSampler
 from sequence.search import ExhaustiveSearchSafety, NoPathsException
@@ -32,6 +37,7 @@ def simulate_ma_sar(
     formula: str,
     render: bool,
     deterministic: bool = True,
+    debug_done: bool = False,
 ):
     check_rabinizer()
 
@@ -98,6 +104,8 @@ def simulate_ma_sar(
             obs, reward, done, info = env.step(action)
             num_steps += 1
             if done:
+                if render or debug_done:
+                    print_ma_episode_done_debug(env, info, step=num_steps)
                 success = ma_episode_success(info, agent_keys)
                 violation = ma_episode_violation(info, agent_keys)
                 if success:

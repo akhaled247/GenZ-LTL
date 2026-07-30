@@ -14,6 +14,7 @@ def main():
     parser.add_argument("--num_episodes", type=int, default=100)
     parser.add_argument("--formula", type=str, default=MA_EVAL_FORMULA_DEFAULT)
     parser.add_argument("--render", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--debug-done", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--deterministic", action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args()
     gamma = 0.998
@@ -27,6 +28,7 @@ def main():
         args.formula,
         args.render,
         args.deterministic,
+        args.debug_done,
     )
 
 

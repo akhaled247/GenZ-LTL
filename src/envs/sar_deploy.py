@@ -84,3 +84,28 @@ def ma_episode_violation(info: dict[str, Any], agents: list[str]) -> bool:
         if isinstance(ai, dict) and ai.get("violation"):
             return True
     return False
+
+
+def print_ma_episode_done_debug(env: Any, info: dict[str, Any], *, step: int | None = None) -> None:
+    """Print termination diagnostics when an MA deploy episode ends."""
+    task = sar_task(env)
+    surface_geom = getattr(task, "surface_casualtys", None)
+    entrapped_geom = getattr(task, "entrapped_casualtys", None)
+    surface_rescued = list(surface_geom.rescued) if surface_geom is not None else None
+    entrapped_rescued = list(entrapped_geom.rescued) if entrapped_geom is not None else None
+
+    header = f"[MA done debug] step={step}" if step is not None else "[MA done debug]"
+    goal_met = info.get("goal_met")
+    if goal_met is None:
+        for value in info.values():
+            if isinstance(value, dict) and "goal_met" in value:
+                goal_met = value.get("goal_met")
+                break
+
+    print(header)
+    print(f"  success (Büchi): {info.get('success')}")
+    print(f"  goal_met (mission): {goal_met}")
+    print(f"  violation: {info.get('violation')}")
+    print(f"  propositions: {info.get('propositions')}")
+    print(f"  surface_casualtys.rescued: {surface_rescued}")
+    print(f"  entrapped_casualtys.rescued: {entrapped_rescued}")

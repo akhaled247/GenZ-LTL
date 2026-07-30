@@ -10,7 +10,12 @@ from tqdm import tqdm
 from deploy.coordinator import MultiAgentSARCoordinator
 from deploy.env_check import assert_sar_wc_paper_protocol
 from deploy.eval_stack import build_sar_ltl_eval_stack
-from envs.sar_deploy import check_rabinizer, ma_episode_success, ma_episode_violation
+from envs.sar_deploy import (
+    check_rabinizer,
+    ma_episode_success,
+    ma_episode_violation,
+    print_ma_episode_done_debug,
+)
 from envs.seq_wrapper import sar_task
 from sequence.search import NoPathsException
 from utils.deploy_meta import MA_EVAL_ENV_DEFAULT, MA_EVAL_FORMULA_DEFAULT
@@ -29,6 +34,7 @@ def simulate_ma_ppo(
     formula: str,
     render: bool,
     deterministic: bool = True,
+    debug_done: bool = False,
 ):
     check_rabinizer()
 
@@ -84,6 +90,8 @@ def simulate_ma_ppo(
             obs, reward, done, info = env.step(action)
             num_steps += 1
             if done:
+                if render or debug_done:
+                    print_ma_episode_done_debug(env, info, step=num_steps)
                 success = ma_episode_success(info, agent_keys)
                 violation = ma_episode_violation(info, agent_keys)
                 if success:
