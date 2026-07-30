@@ -93,6 +93,8 @@ class LDBAWrapper(gymnasium.Wrapper):
 
         # Update trajectory
         props = info['propositions']
+        if isinstance(props, list):
+            props = set(props)
         
         # Update the possible states
         prev_state_indices = [s.state for s in self.states]
@@ -100,7 +102,11 @@ class LDBAWrapper(gymnasium.Wrapper):
         # If the same state can be reached in multiple ways, use the trajectory with the most accepting visits
         new_states = {}
         for state in self.states:
-            for key in self.ldba.get_next_states(state.state, props):
+            try:
+                next_keys = self.ldba.get_next_states(state.state, props)
+            except ValueError:
+                continue
+            for key in next_keys:
                 successor = state.get_successor(*key)
                 # Eliminate the possible states that are violating.
                 if self.ldba.is_state_violating(successor.state):
