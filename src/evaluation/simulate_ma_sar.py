@@ -109,11 +109,10 @@ def simulate_ma_sar(
     config = model_configs[train_env]
     model_store = ModelStore(train_env, exp, seed, None)
     training_status = model_store.load_training_status(map_location='cpu')
-    probe_env = make_env_safety(
-        train_env, sampler, flat=True, sequence=True, max_steps=2500,
-    )
+    # FixedSampler returns LTL strings — use sequence=False (not SequenceSafetyWrapper).
+    # Shapes come from checkpoint; no reset needed for build_model_safety.
+    probe_env = make_env_safety(train_env, sampler, flat=True, sequence=False)
     try:
-        probe_env.reset(seed=seed)
         model = build_model_safety(probe_env, training_status, config)
     finally:
         probe_env.close()
