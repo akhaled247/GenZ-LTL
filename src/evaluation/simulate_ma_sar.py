@@ -106,7 +106,11 @@ def simulate_ma_sar(
     config = model_configs[train_env]
     model_store = ModelStore(train_env, exp, seed, None)
     training_status = model_store.load_training_status(map_location='cpu')
-    model = build_model_safety(env, training_status, config)
+    probe_env = make_env_safety(train_env, sampler, flat=True)
+    try:
+        model = build_model_safety(probe_env, training_status, config)
+    finally:
+        probe_env.close()
     props = get_env_attr(env, 'get_propositions')()
     search = ExhaustiveSearchSafety(env, model, props, num_loops=2)
     agent = MultiAgentSARAgent(env, model, search, props, num_agents, verbose=render)
