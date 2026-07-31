@@ -1,4 +1,4 @@
-"""Reach subgoal lidar for entrapped props max-pools building + casualty channels."""
+"""Reach subgoal lidar uses casualty channels only (buildings have a dedicated slice)."""
 from __future__ import annotations
 
 import numpy as np
@@ -23,7 +23,7 @@ def _mock_sar_env(lidar_dim: int = 4):
     return env, task
 
 
-def test_entrapped_reach_lidar_max_pools_building_and_casualty():
+def test_entrapped_reach_lidar_uses_casualty_only():
     lidar_dim = 4
     building = np.array([0.9, 0.1, 0.0, 0.0], dtype=np.float64)
     entrapped = np.array([0.2, 0.8, 0.0, 0.0], dtype=np.float64)
@@ -33,10 +33,8 @@ def test_entrapped_reach_lidar_max_pools_building_and_casualty():
     }
     reach = frozenset([FrozenAssignment({"entrapped_0": True})])
 
-    reach_obs = lidar_for_assignments(
-        original_obs, reach, lidar_dim, for_reach=True,
-    )
-    np.testing.assert_allclose(reach_obs, np.maximum(building, entrapped))
+    reach_obs = lidar_for_assignments(original_obs, reach, lidar_dim)
+    np.testing.assert_allclose(reach_obs, entrapped)
 
 
 def test_surface_reach_lidar_does_not_include_building():
@@ -49,9 +47,7 @@ def test_surface_reach_lidar_does_not_include_building():
     }
     reach = frozenset([FrozenAssignment({"surface_0": True})])
 
-    reach_obs = lidar_for_assignments(
-        original_obs, reach, lidar_dim, for_reach=True,
-    )
+    reach_obs = lidar_for_assignments(original_obs, reach, lidar_dim)
     np.testing.assert_allclose(reach_obs, surface)
 
 
@@ -69,7 +65,7 @@ def test_entrapped_avoid_lidar_uses_casualty_only():
     np.testing.assert_allclose(avoid_obs, entrapped)
 
 
-def test_pre_process_obs_sar_entrapped_reach_slice_max_pools():
+def test_pre_process_obs_sar_entrapped_reach_slice_is_casualty_only():
     lidar_dim = 4
     env, task = _mock_sar_env(lidar_dim)
     keys = sar_agent_obs_keys(0)
@@ -88,5 +84,7 @@ def test_pre_process_obs_sar_entrapped_reach_slice_max_pools():
         feat = pre_process_obs_sar(env, keys, reach, frozenset(), (feat_dim,))
 
     agent_dim = 16
+    buildings_slice = feat[agent_dim: agent_dim + lidar_dim]
     reach_slice = feat[agent_dim + lidar_dim: agent_dim + 2 * lidar_dim]
-    np.testing.assert_allclose(reach_slice, np.maximum(building, entrapped))
+    np.testing.assert_allclose(buildings_slice, building)
+    np.testing.assert_allclose(reach_slice, entrapped)
