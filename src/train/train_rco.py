@@ -262,7 +262,15 @@ def parse_arguments() -> argparse.Namespace:
         default=False,
         help='Concat current reach/avoid one-hot to env_net embedding (RCO subgoal conditioning).',
     )
+    parser.add_argument(
+        '--cost-clipping',
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        dest='cost_clipping',
+        help='Clip cost policy surrogate like reward (PPO trust region on cost advantage).',
+    )
     args = parser.parse_args()
+    args.rco.cost_clipping = args.cost_clipping
 
     args.experiment.device = resolve_training_device(args.experiment.device)
 
