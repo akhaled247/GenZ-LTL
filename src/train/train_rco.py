@@ -26,7 +26,7 @@ from utils.logging.text_logger import TextLogger
 from utils.logging.wandb_logger import WandbLogger
 from utils.model_store import ModelStore
 from envs.seq_wrapper import sar_task
-from utils.deploy_meta import build_deploy_meta
+from utils.deploy_meta import build_deploy_meta, load_deploy_meta
 from deploy.feature_recipe import infer_feat_recipe
 from config import *
 
@@ -45,8 +45,21 @@ class Trainer:
         else:
             preprocessing.init_vocab(get_env_attr(envs[0], 'get_possible_assignments')())
             self.model_store.save_vocab()
-        # pretrained_model = self.load_pretrained_model()
-        model = build_model_safety(envs[0], training_status, model_configs[self.args.model_config])
+        deploy_meta = load_deploy_meta(self.model_store.path) if resuming else None
+        if deploy_meta is not None and deploy_meta.get("use_subgoal_one_hot") != self.args.one_hot:
+            raise ValueError(
+                f"--one-hot={self.args.one_hot} does not match saved deploy_meta "
+                f"(use_subgoal_one_hot={deploy_meta.get('use_subgoal_one_hot')})."
+            )
+        num_propositions = len(get_env_attr(envs[0], 'get_propositions')())
+        model = build_model_safety(
+            envs[0],
+            training_status,
+            model_configs[self.args.model_config],
+            deploy_meta=deploy_meta,
+            use_subgoal_one_hot=self.args.one_hot,
+            num_propositions=num_propositions,
+        )
         model.to(self.args.experiment.device)
         print(model)
         async_kwargs = None
@@ -117,8 +130,11 @@ class Trainer:
     def write_deploy_meta(self, model, env) -> None:
         actor_input_dim = int(model.actor.enc[0].in_features)
         use_env_net = model.env_net is not None
+        num_props = len(get_env_attr(env, 'get_propositions')())
+        subgoal_dim = 2 * num_props if getattr(model, "use_subgoal_one_hot", False) else 0
         raw_feature_dim = (
-            int(model.env_net.mlp[0].in_features) if use_env_net else actor_input_dim
+            int(model.env_net.mlp[0].in_features) if use_env_net
+            else actor_input_dim - subgoal_dim
         )
         lidar_bins = sar_task(env).lidar_conf.num_bins
         meta = build_deploy_meta(
@@ -127,6 +143,8 @@ class Trainer:
             use_env_net=use_env_net,
             actor_input_dim=actor_input_dim,
             feat_recipe=infer_feat_recipe(raw_feature_dim, lidar_bins),
+            use_subgoal_one_hot=self.args.one_hot,
+            num_propositions=num_props,
         )
         path = self.model_store.save_deploy_meta(meta)
         self.text_logger.info(f"Wrote deploy metadata to {path}")
@@ -238,6 +256,12 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--log_csv", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--log_wandb", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument('--save', action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        '--one-hot',
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help='Concat current reach/avoid one-hot to env_net embedding (RCO subgoal conditioning).',
+    )
     args = parser.parse_args()
 
     args.experiment.device = resolve_training_device(args.experiment.device)

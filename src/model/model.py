@@ -27,7 +27,12 @@ def _linear_layers_from_mlp_prefix(
     return layers
 
 
-def infer_model_safety_shapes(state_dict: dict[str, Any]) -> dict[str, Any]:
+def infer_model_safety_shapes(
+        state_dict: dict[str, Any],
+        *,
+        num_propositions: int | None = None,
+        use_subgoal_one_hot: bool = False,
+) -> dict[str, Any]:
     """Reconstruct safety-model tensor shapes saved in a training checkpoint."""
     actor_in = int(state_dict["actor.enc.0.weight"].shape[1])
     action_dim = int(state_dict["actor.mu.0.weight"].shape[0])
@@ -37,6 +42,8 @@ def infer_model_safety_shapes(state_dict: dict[str, Any]) -> dict[str, Any]:
         if f"actor.enc.{i}.weight" in state_dict
     ]
 
+    subgoal_dim = 2 * num_propositions if use_subgoal_one_hot and num_propositions else 0
+
     env_net_layers: list[int] | None = None
     feat_dim = actor_in
     use_env_net = False
@@ -45,19 +52,23 @@ def infer_model_safety_shapes(state_dict: dict[str, Any]) -> dict[str, Any]:
         feat_dim = env_linears[0][1]
         env_net_layers = [out for out, _in in env_linears]
         env_net_out = env_linears[-1][0]
-        use_env_net = env_net_out == actor_in
+        use_env_net = env_net_out + subgoal_dim == actor_in
 
     embedding_dim = actor_in
-    feature_dim = feat_dim if use_env_net else actor_in
+    if use_env_net:
+        feature_dim = feat_dim
+    else:
+        feature_dim = actor_in - subgoal_dim
 
     return {
-        "feat_dim": feat_dim,
+        "feat_dim": feat_dim if use_env_net else feature_dim,
         "feature_dim": feature_dim,
         "embedding_dim": embedding_dim,
         "env_net_layers": env_net_layers if use_env_net else None,
         "use_env_net": use_env_net,
         "action_dim": action_dim,
         "actor_hidden": actor_hidden,
+        "subgoal_dim": subgoal_dim,
     }
 
 
@@ -136,11 +147,13 @@ class ModelSafety(Model):
                  critic: nn.Module,
                  cost_critic: nn.Module,
                  lagrangian_net: nn.Module,
-                 env_net: Optional[nn.Module],):
+                 env_net: Optional[nn.Module],
+                 use_subgoal_one_hot: bool = False,):
         
         super().__init__(actor, critic, None, env_net)
         self.cost_critic = cost_critic
         self.lagrangian_net = lagrangian_net
+        self.use_subgoal_one_hot = use_subgoal_one_hot
         
     def forward(self, obs, collect: bool = True):
         embedding = self.compute_embedding(obs)
@@ -155,6 +168,8 @@ class ModelSafety(Model):
 
     def compute_embedding(self, obs):
         env_embedding = self.env_net(obs.features) if self.env_net is not None else obs.features
+        if self.use_subgoal_one_hot:
+            env_embedding = torch.cat([env_embedding, obs.current_subgoal], dim=1)
         return env_embedding
 
 def build_model_safety(
@@ -162,9 +177,29 @@ def build_model_safety(
         training_status: dict[str, Any],
         model_config: ModelSafetyConfig,
         deploy_meta: dict[str, Any] | None = None,
+        use_subgoal_one_hot: bool = False,
+        num_propositions: int | None = None,
 ) -> ModelSafety:
     state_dict = training_status.get("model_state")
-    inferred = infer_model_safety_shapes(state_dict) if state_dict else None
+    if deploy_meta is not None:
+        use_subgoal_one_hot = bool(deploy_meta.get("use_subgoal_one_hot", use_subgoal_one_hot))
+        if deploy_meta.get("num_propositions") is not None:
+            num_propositions = int(deploy_meta["num_propositions"])
+
+    if num_propositions is None and hasattr(env, "get_propositions"):
+        num_propositions = len(env.get_propositions())
+
+    subgoal_dim = 2 * num_propositions if use_subgoal_one_hot and num_propositions else 0
+
+    inferred = (
+        infer_model_safety_shapes(
+            state_dict,
+            num_propositions=num_propositions,
+            use_subgoal_one_hot=use_subgoal_one_hot,
+        )
+        if state_dict
+        else None
+    )
 
     if deploy_meta is not None:
         raw_feature_dim = int(deploy_meta["raw_feature_dim"])
@@ -182,22 +217,31 @@ def build_model_safety(
     else:
         raw_feature_dim = int(env.observation_space['features'].shape[0])
         use_env_net_meta = model_config.env_net is not None
-        actor_input_dim = raw_feature_dim
+        actor_input_dim = (
+            (model_config.env_net.build((raw_feature_dim,)).embedding_size + subgoal_dim)
+            if model_config.env_net is not None and use_env_net_meta
+            else raw_feature_dim + subgoal_dim
+        )
 
     if inferred is not None:
         obs_shape = (inferred["feat_dim"],) if inferred.get("use_env_net") else (raw_feature_dim,)
-        env_embedding_dim = inferred["embedding_dim"]
+        env_embedding_dim = inferred["embedding_dim"] - subgoal_dim
         action_dim = inferred["action_dim"]
         actor_hidden = inferred["actor_hidden"] or list(model_config.actor.layers)
     else:
         obs_shape = (raw_feature_dim,)
-        env_embedding_dim = int(obs_shape[0])
+        if model_config.env_net is not None and use_env_net_meta:
+            env_embedding_dim = model_config.env_net.build(obs_shape).embedding_size
+        else:
+            env_embedding_dim = int(obs_shape[0])
         action_dim = (
             env.action_space.n
             if isinstance(env.action_space, gymnasium.spaces.Discrete)
             else int(env.action_space.shape[0])
         )
         actor_hidden = list(model_config.actor.layers)
+
+    actor_input_dim = env_embedding_dim + subgoal_dim
 
     env_net = None
     use_env_net = inferred.get("use_env_net", True) if inferred is not None else use_env_net_meta
@@ -211,8 +255,9 @@ def build_model_safety(
         else:
             env_net = model_config.env_net.build(obs_shape)
         env_embedding_dim = env_net.embedding_size
+        actor_input_dim = env_embedding_dim + subgoal_dim
     elif inferred is not None:
-        env_embedding_dim = inferred["embedding_dim"]
+        env_embedding_dim = inferred["embedding_dim"] - subgoal_dim
 
     if inferred is not None:
         use_discrete = "actor.mu.0.weight" not in state_dict
@@ -222,37 +267,41 @@ def build_model_safety(
     if use_discrete:
         actor = DiscreteActor(
             action_dim=action_dim,
-            layers=[env_embedding_dim, *actor_hidden],
+            layers=[actor_input_dim, *actor_hidden],
             activation=model_config.actor.activation,
         )
     else:
         actor = ContinuousActor(
             action_dim=action_dim,
-            layers=[env_embedding_dim, *actor_hidden],
+            layers=[actor_input_dim, *actor_hidden],
             activation=model_config.actor.activation,
             state_dependent_std=model_config.actor.state_dependent_std,
         )
 
     critic = torch_utils.make_mlp_layers(
-        [env_embedding_dim, *model_config.critic.layers, 1],
+        [actor_input_dim, *model_config.critic.layers, 1],
         activation=model_config.critic.activation,
     )
     cost_critic = torch_utils.make_mlp_layers(
-        [env_embedding_dim, *model_config.cost_critic.layers, 1],
+        [actor_input_dim, *model_config.cost_critic.layers, 1],
         activation=model_config.cost_critic.activation,
         final_layer_activation=False,
     )
     lagrangian_net = torch_utils.make_mlp_layers(
-        [env_embedding_dim, *model_config.lagrangian.layers, 1],
+        [actor_input_dim, *model_config.lagrangian.layers, 1],
         activation=model_config.lagrangian.activation,
     )
 
-    model_safety = ModelSafety(actor, critic, cost_critic, lagrangian_net, env_net)
+    model_safety = ModelSafety(
+        actor, critic, cost_critic, lagrangian_net, env_net,
+        use_subgoal_one_hot=use_subgoal_one_hot,
+    )
 
     if state_dict is not None:
         model_safety.load_state_dict(state_dict, strict=use_env_net)
     model_safety.raw_feature_dim = raw_feature_dim
     model_safety.input_feat_dim = raw_feature_dim  # legacy alias for MA eval scripts
+    model_safety.use_subgoal_one_hot = use_subgoal_one_hot
     from deploy.feature_recipe import infer_feat_recipe
     from envs.seq_wrapper import sar_task
 

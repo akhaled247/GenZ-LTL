@@ -11,6 +11,7 @@ from ltl import FixedSampler
 from model.model import build_model, build_model_safety
 from sequence.search import ExhaustiveSearch, ExhaustiveSearchSafety
 from utils.model_store import ModelStore
+from utils.deploy_meta import load_deploy_meta
 
 
 def build_sar_ltl_eval_stack(
@@ -67,8 +68,11 @@ def build_sar_ltl_eval_stack(
                 eval_env, sampler, flat=flat, sequence=False,
                 render_mode=render_mode, max_steps=2500,
             )
+            deploy_meta = load_deploy_meta(model_store.path)
             config = model_configs[train_env]
-            model = build_model_safety(env, training_status, config)
+            model = build_model_safety(
+                env, training_status, config, deploy_meta=deploy_meta,
+            )
         props = env.get_propositions()
         search = ExhaustiveSearchSafety(env, model, props, num_loops=2)
 

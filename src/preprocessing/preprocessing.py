@@ -29,12 +29,34 @@ def preprocess_obss(obss: list[dict[str, Any]], propositions: list[str], device=
     return DictList({
         "features": preprocess_features(features, device=device),
         "seq": BatchedReachAvoidSequences([preprocess_sequence(seq, propositions) for seq in seqs], device=device),
+        "current_subgoal": preprocess_current_subgoal(obss, propositions, device=device),
         "epsilon_mask": torch.tensor(epsilon_mask, dtype=torch.bool).to(device),
     })
 
 
 def preprocess_features(features, device=None) -> torch.tensor:
     return torch.tensor(np.array(features), dtype=torch.float).to(device)
+
+
+def preprocess_current_subgoal(
+        obss: list[dict[str, Any]],
+        propositions: list[str],
+        device=None,
+) -> torch.Tensor:
+    """One-hot over props for the active reach/avoid pair only (goal[0])."""
+    rows = []
+    for obs in obss:
+        goal = obs.get("goal") or []
+        if goal:
+            reach, avoid = goal[0]
+        else:
+            reach, avoid = frozenset(), frozenset()
+        rows.append(
+            preprocess_assignments(reach, propositions)
+            + preprocess_assignments(avoid, propositions)
+        )
+    return torch.tensor(np.array(rows), dtype=torch.float).to(device)
+
 
 # one-hot encoding for assignments
 def preprocess_sequence(seq: LDBASequence, propositions: list[str]) -> list[ReachAvoidSet]:

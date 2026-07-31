@@ -38,6 +38,7 @@ def attach_model_deploy_fields(model: Any, deploy_meta: dict[str, Any]) -> None:
     model.input_feat_dim = int(deploy_meta["raw_feature_dim"])
     model.feat_recipe = deploy_meta.get("feat_recipe", FEAT_RECIPE_SAR_V1)
     model.use_env_net_deploy = bool(deploy_meta.get("use_env_net", True))
+    model.use_subgoal_one_hot = bool(deploy_meta.get("use_subgoal_one_hot", False))
 
 
 def sar_preprocess_for_deploy(
