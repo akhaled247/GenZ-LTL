@@ -19,6 +19,7 @@ def _make_genz_worker_env(
     sar_env_backend: str,
     safety: bool,
     sequence: bool,
+    entr_bldg_obs: bool = False,
 ) -> gymnasium.Env:
     """Top-level factory for multiprocessing workers (Windows spawn-safe)."""
     ensure_genz_paths()
@@ -37,6 +38,7 @@ def _make_genz_worker_env(
         max_steps=max_steps,
         sequence=sequence,
         sar_env_backend=sar_env_backend,
+        entr_bldg_obs=entr_bldg_obs,
     )
     env.reset(seed=worker_seed)
     return env
@@ -52,6 +54,7 @@ def make_worker_env_thunk(
     sar_env_backend: str,
     safety: bool,
     sequence: bool,
+    entr_bldg_obs: bool = False,
 ) -> Callable[[], gymnasium.Env]:
     def _thunk() -> gymnasium.Env:
         return _make_genz_worker_env(
@@ -64,6 +67,7 @@ def make_worker_env_thunk(
             sar_env_backend,
             safety,
             sequence,
+            entr_bldg_obs,
         )
 
     return _thunk

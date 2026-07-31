@@ -92,6 +92,7 @@ def build_genz_async_vec(
     sar_env_backend: str,
     safety: bool = True,
     sequence: bool = True,
+    entr_bldg_obs: bool = False,
 ) -> GenZSafetyAsyncEnv:
     from envs.vec.worker_factory import make_worker_env_thunk
 
@@ -107,6 +108,7 @@ def build_genz_async_vec(
             sar_env_backend,
             safety,
             sequence,
+            entr_bldg_obs,
         )
         for rank in range(n_envs)
     ]

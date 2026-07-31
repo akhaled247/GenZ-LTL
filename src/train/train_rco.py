@@ -51,6 +51,11 @@ class Trainer:
                 f"--one-hot={self.args.one_hot} does not match saved deploy_meta "
                 f"(use_subgoal_one_hot={deploy_meta.get('use_subgoal_one_hot')})."
             )
+        if deploy_meta is not None and deploy_meta.get("entr_bldg_obs", False) != self.args.entr_bldg_obs:
+            raise ValueError(
+                f"--entr-bldg-obs={self.args.entr_bldg_obs} does not match saved deploy_meta "
+                f"(entr_bldg_obs={deploy_meta.get('entr_bldg_obs', False)})."
+            )
         num_propositions = len(get_env_attr(envs[0], 'get_propositions')())
         model = build_model_safety(
             envs[0],
@@ -144,6 +149,7 @@ class Trainer:
             actor_input_dim=actor_input_dim,
             feat_recipe=infer_feat_recipe(raw_feature_dim, lidar_bins),
             use_subgoal_one_hot=self.args.one_hot,
+            entr_bldg_obs=self.args.entr_bldg_obs,
             num_propositions=num_props,
         )
         path = self.model_store.save_deploy_meta(meta)
@@ -160,6 +166,7 @@ class Trainer:
             sequence=True,
             sar_env_backend=self.args.experiment.sar_env_backend,
             max_steps=2500,
+            entr_bldg_obs=self.args.entr_bldg_obs,
         )
 
     def async_factory_kwargs(self, curriculum_stage: int) -> dict[str, Any]:
@@ -173,6 +180,7 @@ class Trainer:
             "sar_env_backend": self.args.experiment.sar_env_backend,
             "safety": True,
             "sequence": True,
+            "entr_bldg_obs": self.args.entr_bldg_obs,
         }
 
     def make_envs(self, curriculum_stage: int) -> list[gymnasium.Env]:
@@ -268,6 +276,13 @@ def parse_arguments() -> argparse.Namespace:
         default=False,
         dest='cost_clipping',
         help='Clip cost policy surrogate like reward (PPO trust region on cost advantage).',
+    )
+    parser.add_argument(
+        '--entr-bldg-obs',
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        dest='entr_bldg_obs',
+        help='Max-pool building lidar into entrapped reach subgoal lidar slice.',
     )
     args = parser.parse_args()
     args.rco.cost_clipping = args.cost_clipping

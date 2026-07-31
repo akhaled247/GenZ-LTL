@@ -129,6 +129,7 @@ def pre_process_obs_sar(
         feat_shape: tuple[int, ...],
         agent_idx: int = 0,
         allow_legacy_padding: bool = False,
+        entr_bldg_obs: bool = False,
 ) -> np.ndarray:
     original_obs = sar_agent_obs(env, agent_idx)
     lidar_dim = sar_task(env).lidar_conf.num_bins
@@ -140,7 +141,7 @@ def pre_process_obs_sar(
         for prop in assignment.to_string():
             used_keys.update(lidar_keys_for_prop(
                 prop, agent_idx, num_agents, available_keys=obs_keys,
-                for_reach=True,
+                for_reach=entr_bldg_obs,
             ))
     for assignment in avoid:
         for prop in assignment.to_string():
@@ -156,7 +157,7 @@ def pre_process_obs_sar(
     assert buildings_obs.shape == (lidar_dim,)
     reach_obs = lidar_for_assignments(
         original_obs, reach, lidar_dim, agent_idx=agent_idx, num_agents=num_agents,
-        for_reach=True,
+        for_reach=entr_bldg_obs,
     )
     avoid_obs = lidar_for_assignments(
         original_obs, avoid, lidar_dim, agent_idx=agent_idx, num_agents=num_agents,
@@ -275,8 +276,15 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
     Wrapper that adds a reach-avoid sequence of propositions to the observation space.
     """
 
-    def __init__(self, env: gymnasium.Env, sample_sequence: Callable[[], LDBASequence], partial_reward=False):
+    def __init__(
+        self,
+        env: gymnasium.Env,
+        sample_sequence: Callable[[], LDBASequence],
+        partial_reward=False,
+        entr_bldg_obs: bool = False,
+    ):
         super().__init__(env)
+        self.entr_bldg_obs = bool(entr_bldg_obs)
         self.region_order = get_env_attr(env, 'get_propositions')()
         if "SAR" in env.spec.id:
             self.agent_obs_keys = SAR_AGENT_OBS_KEYS
@@ -347,6 +355,7 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
             return pre_process_obs_sar(
                 self.env, self.agent_obs_keys, reach, avoid,
                 self.observation_space['features'].shape,
+                entr_bldg_obs=self.entr_bldg_obs,
             )
         if "PointLtlSafety" in self.env.spec.id:
             return self.pre_process_obs_zones(reach, avoid)

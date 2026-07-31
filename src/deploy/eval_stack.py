@@ -57,19 +57,21 @@ def build_sar_ltl_eval_stack(
         props = env.get_propositions()
         search = ExhaustiveSearchSafety(env, model, props, num_loops=2)
     else:
+        config = model_configs[train_env]
+        deploy_meta = load_deploy_meta(model_store.path)
         if ma_deploy:
             model, _meta = load_model_for_deploy(train_env, exp, seed, formula)
             env = make_env_safety(
                 eval_env, sampler, flat=False, sequence=False,
                 render_mode=render_mode, max_steps=2500,
+                entr_bldg_obs=bool(deploy_meta.get("entr_bldg_obs", False)),
             )
         else:
             env = make_env_safety(
                 eval_env, sampler, flat=flat, sequence=False,
                 render_mode=render_mode, max_steps=2500,
+                entr_bldg_obs=bool(deploy_meta.get("entr_bldg_obs", False)),
             )
-            deploy_meta = load_deploy_meta(model_store.path)
-            config = model_configs[train_env]
             model = build_model_safety(
                 env, training_status, config, deploy_meta=deploy_meta,
             )

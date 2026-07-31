@@ -65,6 +65,7 @@ def simulate_ma_sar(
         flat=False,
         render_mode="human" if render else None,
         sar_env_backend="specrl",
+        entr_bldg_obs=bool(deploy_meta.get("entr_bldg_obs", False)),
     )
     assert_sar_wc_paper_protocol(env)
 
