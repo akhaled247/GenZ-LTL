@@ -44,8 +44,11 @@ def lidar_keys_for_prop(
     agent_idx: int = 0,
     num_agents: int = 1,
     available_keys: set[str] | frozenset[str] | None = None,
+    *,
+    for_reach: bool = False,
 ) -> list[str]:
     from specbench.envs.zones.sar_propositions import (
+        is_entrapped_prop,
         resolve_casualty_lidar_keys,
         resolve_casualty_lidar_keys_for_observer,
     )
@@ -55,6 +58,11 @@ def lidar_keys_for_prop(
         )
     else:
         keys = resolve_casualty_lidar_keys(prop, agent_idx=agent_idx, num_agents=num_agents)
+    if for_reach and is_entrapped_prop(prop):
+        building_key = buildings_lidar_key(agent_idx)
+        if available_keys is None or building_key in available_keys:
+            if building_key not in keys:
+                keys.append(building_key)
     return keys
 
 
@@ -68,6 +76,8 @@ def lidar_for_assignments(
     lidar_dim: int,
     agent_idx: int = 0,
     num_agents: int = 1,
+    *,
+    for_reach: bool = False,
 ) -> np.ndarray:
     keys = []
     obs_keys = set(original_obs.keys())
@@ -75,6 +85,7 @@ def lidar_for_assignments(
         for prop in assignment.to_string():
             keys.extend(lidar_keys_for_prop(
                 prop, agent_idx, num_agents, available_keys=obs_keys,
+                for_reach=for_reach,
             ))
     if not keys:
         return np.zeros(lidar_dim, dtype=np.float64)
@@ -129,6 +140,7 @@ def pre_process_obs_sar(
         for prop in assignment.to_string():
             used_keys.update(lidar_keys_for_prop(
                 prop, agent_idx, num_agents, available_keys=obs_keys,
+                for_reach=True,
             ))
     for assignment in avoid:
         for prop in assignment.to_string():
@@ -144,6 +156,7 @@ def pre_process_obs_sar(
     assert buildings_obs.shape == (lidar_dim,)
     reach_obs = lidar_for_assignments(
         original_obs, reach, lidar_dim, agent_idx=agent_idx, num_agents=num_agents,
+        for_reach=True,
     )
     avoid_obs = lidar_for_assignments(
         original_obs, avoid, lidar_dim, agent_idx=agent_idx, num_agents=num_agents,
