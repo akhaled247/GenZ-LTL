@@ -109,3 +109,31 @@ def test_pre_process_obs_sar_entrapped_reach_respects_flag():
     reach_on = feat_on[agent_dim + lidar_dim: agent_dim + 2 * lidar_dim]
     np.testing.assert_allclose(reach_off, entrapped)
     np.testing.assert_allclose(reach_on, np.maximum(building, entrapped))
+
+
+def test_pre_process_obs_sar_includes_walls_lidar_when_present():
+    lidar_dim = 4
+    env, task = _mock_sar_env(lidar_dim)
+    keys = sar_agent_obs_keys(0)
+    agent_obs = {k: np.zeros(3, dtype=np.float32) for k in keys}
+    building = np.array([0.1, 0.0, 0.0, 0.0], dtype=np.float32)
+    walls = np.array([0.0, 0.7, 0.0, 0.0], dtype=np.float32)
+    entrapped = np.array([0.0, 0.0, 0.8, 0.0], dtype=np.float32)
+    agent_obs["terracotta_buildings_lidar_0"] = building
+    agent_obs["walls_lidar_0"] = walls
+    agent_obs["entrapped_casualtys_lidar_0"] = entrapped
+
+    reach = frozenset([FrozenAssignment({"entrapped_0": True})])
+    feat_dim = sar_feat_dim(lidar_dim, include_walls_lidar=True)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("envs.seq_wrapper.sar_agent_obs", lambda _env, _idx=0: agent_obs)
+        mp.setattr("envs.seq_wrapper.sar_task", lambda _env: task)
+        feat = pre_process_obs_sar(env, keys, reach, frozenset(), (feat_dim,))
+
+    agent_len = sum(np.ravel(agent_obs[k]).size for k in keys)
+    walls_slice = feat[agent_len + lidar_dim: agent_len + 2 * lidar_dim]
+    reach_slice = feat[agent_len + 2 * lidar_dim: agent_len + 3 * lidar_dim]
+    assert feat.shape == (feat_dim,)
+    np.testing.assert_allclose(walls_slice, walls)
+    np.testing.assert_allclose(reach_slice, entrapped)

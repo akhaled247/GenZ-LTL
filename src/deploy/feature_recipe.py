@@ -9,12 +9,16 @@ from utils.deploy_meta import FEAT_RECIPE_SAR_V1, build_deploy_meta, load_deploy
 FEAT_RECIPE_LEGACY_V0 = "legacy_v0"
 
 
-def canonical_raw_dim(lidar_bins: int) -> int:
-    return sar_feat_dim(lidar_bins)
+def canonical_raw_dim(lidar_bins: int, *, include_walls_lidar: bool = False) -> int:
+    return sar_feat_dim(lidar_bins, include_walls_lidar=include_walls_lidar)
 
 
 def infer_feat_recipe(raw_feature_dim: int, lidar_bins: int) -> str:
-    if int(raw_feature_dim) == canonical_raw_dim(lidar_bins):
+    canonical = {
+        canonical_raw_dim(lidar_bins, include_walls_lidar=False),
+        canonical_raw_dim(lidar_bins, include_walls_lidar=True),
+    }
+    if int(raw_feature_dim) in canonical:
         return FEAT_RECIPE_SAR_V1
     return FEAT_RECIPE_LEGACY_V0
 

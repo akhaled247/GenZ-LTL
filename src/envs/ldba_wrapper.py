@@ -7,7 +7,13 @@ from gymnasium.core import WrapperObsType, WrapperActType
 from gymnasium import spaces
 
 from envs import get_env_attr
-from envs.seq_wrapper import pre_process_obs_sar, sar_agent_obs_keys, sar_feat_dim, sar_task
+from envs.seq_wrapper import (
+    pre_process_obs_sar,
+    sar_agent_obs_keys,
+    sar_feat_dim,
+    sar_has_walls_lidar,
+    sar_task,
+)
 from ltl.automata import ltl2ldba, LDBA, LDBASequence
 from ltl.logic import Assignment, FrozenAssignment
 
@@ -50,7 +56,10 @@ class LDBAWrapper(gymnasium.Wrapper):
             flat = getattr(inner, "flat", True)
             self.agent_obs_keys = sar_agent_obs_keys(0)
             if num_agents <= 1 or flat:
-                feat_dim = sar_feat_dim(task.lidar_conf.num_bins)
+                feat_dim = sar_feat_dim(
+                    task.lidar_conf.num_bins,
+                    include_walls_lidar=sar_has_walls_lidar(env),
+                )
                 self.observation_space = spaces.Dict({
                     'features': spaces.Box(-np.inf, np.inf, (feat_dim,), dtype=np.float32),
                     'goal': self.observation_space['goal'],
@@ -237,7 +246,12 @@ class LDBAWrapper(gymnasium.Wrapper):
     ) -> np.ndarray:
         keys = sar_agent_obs_keys(agent_idx)
         if feat_shape is None:
-            feat_shape = (sar_feat_dim(sar_task(self.env).lidar_conf.num_bins),)
+            feat_shape = (
+                sar_feat_dim(
+                    sar_task(self.env).lidar_conf.num_bins,
+                    include_walls_lidar=sar_has_walls_lidar(self.env, agent_idx),
+                ),
+            )
         return pre_process_obs_sar(
             self.env, keys, reach, avoid, feat_shape,
             agent_idx=agent_idx, allow_legacy_padding=allow_legacy_padding,

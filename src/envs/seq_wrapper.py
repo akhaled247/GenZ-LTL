@@ -16,8 +16,14 @@ SAR_AGENT_OBS_KEYS = [
 ZONES_SAFETY_FEAT_DIM = 48
 
 
-def sar_feat_dim(lidar_bins: int, agent_obs_dim: int = 16) -> int:
-    return agent_obs_dim + 3 * lidar_bins
+def sar_feat_dim(
+    lidar_bins: int,
+    agent_obs_dim: int = 16,
+    *,
+    include_walls_lidar: bool = False,
+) -> int:
+    indep_lidar = 1 + int(include_walls_lidar)  # buildings (+ optional walls)
+    return agent_obs_dim + (indep_lidar + 2) * lidar_bins  # reach + avoid
 
 
 def sar_task(env: gymnasium.Env):
@@ -68,6 +74,28 @@ def lidar_keys_for_prop(
 
 def buildings_lidar_key(agent_idx: int = 0) -> str:
     return f"terracotta_buildings_lidar_{agent_idx}"
+
+
+def walls_lidar_key(agent_idx: int = 0) -> str:
+    return f"walls_lidar_{agent_idx}"
+
+
+def sar_has_walls_lidar(env: gymnasium.Env, agent_idx: int = 0) -> bool:
+    """True when per-agent obs dict includes interior wall lidar (SAR levels 1–2)."""
+    key = walls_lidar_key(agent_idx)
+    task = sar_task(env)
+    original_obs = getattr(task, "original_obs", None)
+    if original_obs is not None:
+        agent_key = f"agent_{agent_idx}"
+        if isinstance(original_obs, dict) and agent_key in original_obs:
+            return key in original_obs[agent_key]
+        if isinstance(original_obs, dict):
+            return key in original_obs
+    obs_info = getattr(task, "obs_info", None)
+    obs_space_dict = getattr(obs_info, "obs_space_dict", None) if obs_info else None
+    if obs_space_dict is not None:
+        return key in obs_space_dict.spaces
+    return False
 
 
 def lidar_for_assignments(
@@ -136,6 +164,10 @@ def pre_process_obs_sar(
     num_agents = getattr(sar_task(env), "agent_num", 1)
     used_keys = set(agent_obs_keys)
     used_keys.add(buildings_lidar_key(agent_idx))
+    walls_key = walls_lidar_key(agent_idx)
+    include_walls = walls_key in original_obs
+    if include_walls:
+        used_keys.add(walls_key)
     obs_keys = set(original_obs.keys())
     for assignment in reach:
         for prop in assignment.to_string():
@@ -155,6 +187,11 @@ def pre_process_obs_sar(
     ])
     buildings_obs = original_obs[buildings_lidar_key(agent_idx)].flatten()
     assert buildings_obs.shape == (lidar_dim,)
+    indep_parts = [agent_obs, buildings_obs]
+    if include_walls:
+        walls_obs = original_obs[walls_key].flatten()
+        assert walls_obs.shape == (lidar_dim,)
+        indep_parts.append(walls_obs)
     reach_obs = lidar_for_assignments(
         original_obs, reach, lidar_dim, agent_idx=agent_idx, num_agents=num_agents,
         for_reach=entr_bldg_obs,
@@ -162,7 +199,7 @@ def pre_process_obs_sar(
     avoid_obs = lidar_for_assignments(
         original_obs, avoid, lidar_dim, agent_idx=agent_idx, num_agents=num_agents,
     )
-    obs = np.concatenate([agent_obs, buildings_obs, reach_obs, avoid_obs]).astype(np.float32)
+    obs = np.concatenate([*indep_parts, reach_obs, avoid_obs]).astype(np.float32)
     target = int(feat_shape[0])
     if obs.shape[0] < target:
         if not allow_legacy_padding:
@@ -188,7 +225,10 @@ class SequenceWrapper(gymnasium.Wrapper):
         if "SAR" in env.spec.id:
             self.agent_obs_keys = SAR_AGENT_OBS_KEYS
             lidar_bins = sar_task(env).lidar_conf.num_bins
-            feat_dim = sar_feat_dim(lidar_bins)
+            feat_dim = sar_feat_dim(
+                lidar_bins,
+                include_walls_lidar=sar_has_walls_lidar(env),
+            )
             self.observation_space = spaces.Dict({
                 'features': spaces.Box(-np.inf, np.inf, (feat_dim,), dtype=np.float32),
             })
@@ -289,7 +329,10 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
         if "SAR" in env.spec.id:
             self.agent_obs_keys = SAR_AGENT_OBS_KEYS
             lidar_bins = sar_task(env).lidar_conf.num_bins
-            feat_dim = sar_feat_dim(lidar_bins)
+            feat_dim = sar_feat_dim(
+                lidar_bins,
+                include_walls_lidar=sar_has_walls_lidar(env),
+            )
             self.observation_space = spaces.Dict({
                 'features': spaces.Box(-np.inf, np.inf, (feat_dim,), dtype=np.float32),
             })

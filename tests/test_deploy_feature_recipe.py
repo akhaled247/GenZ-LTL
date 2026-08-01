@@ -22,6 +22,13 @@ def test_infer_feat_recipe_legacy_when_mismatch():
     assert infer_feat_recipe(96, lidar_bins) == FEAT_RECIPE_LEGACY_V0
 
 
+def test_infer_feat_recipe_sar_v1_with_walls_lidar():
+    lidar_bins = 16
+    raw = canonical_raw_dim(lidar_bins, include_walls_lidar=True)
+    assert raw == 80
+    assert infer_feat_recipe(raw, lidar_bins) == FEAT_RECIPE_SAR_V1
+
+
 def test_pre_process_obs_sar_rejects_padding_without_legacy():
     pytest.importorskip("numpy")
     import numpy as np
