@@ -12,16 +12,19 @@ from envs.seq_wrapper import sar_task
 from ltl import FixedSampler
 from model.model import build_model_safety
 from utils.model_store import ModelStore
-
+from utils.train_device import resolve_training_device
 
 def load_model_for_deploy(
     train_env: str,
     exp: str,
     seed: int,
     formula: str,
+    device: str = "cpu"
 ) -> tuple[Any, dict[str, Any], ModelStore]:
+    if device != "cpu":
+          device = resolve_training_device(device)
     model_store = ModelStore(train_env, exp, seed, None)
-    training_status = model_store.load_training_status(map_location="cpu")
+    training_status = model_store.load_training_status(map_location=device)
 
     probe_env = make_env_safety(
         train_env, FixedSampler.partial(formula), flat=True, sequence=False,
@@ -42,6 +45,7 @@ def load_model_for_deploy(
         model = build_model_safety(
             probe_env, training_status, config, deploy_meta=deploy_meta,
         )
+        model.to(device)
         attach_model_deploy_fields(model, deploy_meta)
     finally:
         probe_env.close()

@@ -21,6 +21,7 @@ from envs.sar_deploy import (
 from envs.seq_wrapper import sar_task
 from ltl import FixedSampler
 from sequence.search import ExhaustiveSearchSafety, NoPathsException
+from utils.train_device import resolve_training_device
 from utils.deploy_meta import MA_EVAL_ENV_DEFAULT, MA_EVAL_FORMULA_DEFAULT, FEAT_RECIPE_LEGACY_V0
 
 TRAIN_ENV = "PointLTL0MASAR1WC-v0"
@@ -38,6 +39,7 @@ def simulate_ma_sar(
     render: bool,
     deterministic: bool = True,
     debug_done: bool = False,
+    device: str = "cpu",
 ):
     check_rabinizer()
 
@@ -45,7 +47,10 @@ def simulate_ma_sar(
     np.random.seed(seed)
     torch.random.manual_seed(seed)
 
-    model, deploy_meta, _store = load_model_for_deploy(train_env, exp, seed, formula)
+    if device != "cpu":
+        device = resolve_training_device(device)
+
+    model, deploy_meta, _store = load_model_for_deploy(train_env, exp, seed, formula, device=device)
 
     if formula == MA_EVAL_FORMULA_DEFAULT:
         formula = deploy_meta.get("ma_eval_formula", formula)
@@ -74,9 +79,9 @@ def simulate_ma_sar(
     agent_keys = [f"agent_{i}" for i in range(num_agents)]
 
     props = get_env_attr(env, "get_propositions")()
-    search = ExhaustiveSearchSafety(env, model, props, num_loops=2)
+    search = ExhaustiveSearchSafety(env, model, props, num_loops=2, device=device)
     coordinator = MultiAgentSARCoordinator(
-        env, model, search, props, num_agents, verbose=render,
+        env, model, search, props, num_agents, verbose=render, device=device
     )
 
     num_successes = 0

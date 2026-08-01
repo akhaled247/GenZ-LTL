@@ -23,6 +23,7 @@ class MultiAgentSARCoordinator:
         propositions: set[str],
         num_agents: int,
         verbose: bool = False,
+        device = None,
     ):
         from model.agent import Agent
 
@@ -35,7 +36,8 @@ class MultiAgentSARCoordinator:
         self.sequence = None
         self.current_goal_steps = 0
         self.timeout = 300
-        self._forward_agent = Agent(env, model, search, propositions, verbose=verbose)
+        dev = device if device is not None else next(model.parameters()).device
+        self._forward_agent = Agent(env, model, search, propositions, verbose=verbose, device=dev)
 
     def reset(self) -> None:
         self.sequence = None

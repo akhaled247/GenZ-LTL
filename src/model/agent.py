@@ -11,7 +11,7 @@ from ltl.logic import Assignment, FrozenAssignment
 
 
 class Agent:
-    def __init__(self, env, model: Model, search: SequenceSearch, propositions: set[str], verbose=False, timeout=None):
+    def __init__(self, env, model: Model, search: SequenceSearch, propositions: set[str], verbose=False, timeout=None, device=None):
         self.env = env
         self.model = model
         self.search = search
@@ -21,6 +21,7 @@ class Agent:
         # Timeout mechanism
         self.timeout = 300 # timeout if timeout else float('inf')
         self.current_goal_steps = 0
+        self.device = device if device is not None else next(model.parameters()).device
 
     def reset(self):
         self.sequence = None
@@ -74,9 +75,9 @@ class Agent:
                 )
         if not (isinstance(obs, list) or isinstance(obs, tuple)):
             obs = [obs]
-        preprocessed = preprocessing.preprocess_obss(obs, self.propositions)
+        preprocessed = preprocessing.preprocess_obss(obs, self.propositions, device=self.device)
         with torch.no_grad():
             out = self.model(preprocessed)
             dist = out[0]
             action = dist.mode if deterministic else dist.sample()
-        return action.detach().numpy()
+        return action.detach().cpu().numpy()

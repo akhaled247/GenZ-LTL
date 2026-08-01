@@ -171,8 +171,8 @@ class ExhaustiveSearch(SequenceSearch):
 
 
 class ExhaustiveSearchSafety(SequenceSearch):
-    def __init__(self, env, model: nn.Module, propositions, num_loops: int):
-        super().__init__(model, propositions)
+    def __init__(self, env, model: nn.Module, propositions, num_loops: int, device=None):
+        super().__init__(model, propositions, device=device)
         self.env = env
         self.num_loops = num_loops
         from envs.seq_wrapper import sar_task

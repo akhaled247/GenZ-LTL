@@ -64,6 +64,24 @@ env_to_tasks = {
         '((!surface_0 & !surface_1) U all_entrapped) & F all_surface',
         '(!entrapped_0 U surface_0) & (!entrapped_1 U surface_1) & F (surface_0 & surface_1)',
     ],
+
+    'PointLTL1MASAR2WC-v0': [
+            '(!surface_0 U entrapped_0) & F surface_0',
+            '(!surface_1 U entrapped_1) & F surface_1',
+            '((!surface_0 U entrapped_0) & F surface_0) & ((!surface_1 U entrapped_1) & F surface_1)',
+            '((!surface_0 & !surface_1) U all_entrapped) & (F surface_0 & F surface_1)',
+            '((!surface_0 & !surface_1) U all_entrapped) & F all_surface',
+            '(!entrapped_0 U surface_0) & (!entrapped_1 U surface_1) & F (surface_0 & surface_1)',
+        ],
+
+    'PointLTL2MASAR2WC-v0': [
+            '(!surface_0 U entrapped_0) & F surface_0',
+            '(!surface_1 U entrapped_1) & F surface_1',
+            '((!surface_0 U entrapped_0) & F surface_0) & ((!surface_1 U entrapped_1) & F surface_1)',
+            '((!surface_0 & !surface_1) U all_entrapped) & (F surface_0 & F surface_1)',
+            '((!surface_0 & !surface_1) U all_entrapped) & F all_surface',
+            '(!entrapped_0 U surface_0) & (!entrapped_1 U surface_1) & F (surface_0 & surface_1)',
+        ],
 }
 
 
@@ -80,6 +98,10 @@ def main(env, exp, seeds):
         'LetterSafetyEnv-v0': 0.94,
         'PointLTL0MASAR1WC-v0': 0.998,
         'PointLTL0MASAR2WC-v0': 0.998,
+        'PointLTL1MASAR1WC-v0': 0.998,
+        'PointLTL1MASAR2WC-v0': 0.998,
+        'PointLTL2MASAR1WC-v0': 0.998,
+        'PointLTL2MASAR2WC-v0': 0.998,
     }[env]
     
     use_ma_eval = env == 'PointLTL0MASAR2WC-v0'

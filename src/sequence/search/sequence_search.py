@@ -13,9 +13,10 @@ from ltl.automata import LDBA, LDBASequence, LDBATransition
 class SequenceSearch(ABC):
     """A search that can be performed on an LDBA and yields the optimal sequence according to the model."""
 
-    def __init__(self, model: nn.Module, propositions, **kwargs):
+    def __init__(self, model: nn.Module, propositions, device, **kwargs):
         self.model = model
         self.propositions = propositions
+        self.device = device if device is not None else next(model.parameters()).device
 
     @abstractmethod
     def __call__(self, ldba: LDBA, ldba_state: int, obs) -> LDBASequence:
@@ -25,7 +26,7 @@ class SequenceSearch(ABC):
         obs['goal'] = seq
         if not (isinstance(obs, list) or isinstance(obs, tuple)):
             obs = [obs]
-        preprocessed = preprocessing.preprocess_obss(obs, self.propositions)
+        preprocessed = preprocessing.preprocess_obss(obs, self.propositions, device=self.device)
         with torch.no_grad():
             out = self.model(preprocessed)
         return out[1].item()
@@ -38,7 +39,7 @@ class SequenceSearch(ABC):
             self.env, self.model, reach, avoid, agent_idx=agent_idx,
         )
         batch = [obs_i]
-        preprocessed = preprocessing.preprocess_obss(batch, self.propositions)
+        preprocessed = preprocessing.preprocess_obss(batch, self.propositions, device=self.device)
         with torch.no_grad():
             out = self.model(preprocessed)
         return out[1].item()
@@ -61,7 +62,7 @@ class SequenceSearch(ABC):
             self.env, self.model, reach, avoid, agent_idx=agent_idx,
         )
         batch = [obs_i]
-        preprocessed = preprocessing.preprocess_obss(batch, self.propositions)
+        preprocessed = preprocessing.preprocess_obss(batch, self.propositions, device=self.device)
         with torch.no_grad():
             _, value, cost_value, lag = self.model(preprocessed, collect=False)
         return value.item() - lag.item() * cost_value.item()

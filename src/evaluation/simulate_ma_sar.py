@@ -12,6 +12,7 @@ def main():
     parser.add_argument("--exp", type=str, default="GenZ-LTL")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--num_episodes", type=int, default=100)
+    parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--formula", type=str, default=MA_EVAL_FORMULA_DEFAULT)
     parser.add_argument("--render", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--debug-done", action=argparse.BooleanOptionalAction, default=False)
@@ -29,6 +30,7 @@ def main():
         args.render,
         args.deterministic,
         args.debug_done,
+        args.device
     )
 
 
