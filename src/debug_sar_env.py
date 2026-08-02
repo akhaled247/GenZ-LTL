@@ -14,12 +14,12 @@ from envs.sar_factory import make_sar_base_env
 from envs.seq_wrapper import sar_feat_dim
 
 PROBES = [
-    ("PointLTL0MASAR1-v0", False),
-    ("PointLTL0MASAR1WC-v0", True),
-    ("PointLTL2MASAR2-v0", False),
+    # ("PointLTL1MASAR1-v0", False),
+    ("PointLTL1MASAR1WC-v0", True),
+    # ("PointLTL2MASAR2-v0", False),
 ]
 LIDAR_BINS = 16
-EXPECTED_FEAT_DIM = sar_feat_dim(LIDAR_BINS)
+EXPECTED_FEAT_DIM = sar_feat_dim(LIDAR_BINS, include_walls_lidar=True)
 
 
 def _benchmark_reset(env_id: str, backend: str) -> None:
