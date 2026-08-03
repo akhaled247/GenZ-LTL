@@ -19,8 +19,6 @@ PROBES = [
     # ("PointLTL2MASAR2-v0", False),
 ]
 LIDAR_BINS = 16
-EXPECTED_FEAT_DIM = sar_feat_dim(LIDAR_BINS, include_walls_lidar=True)
-
 
 def _benchmark_reset(env_id: str, backend: str) -> None:
     env = make_sar_base_env(env_id, backend=backend)
@@ -34,20 +32,27 @@ def _benchmark_reset(env_id: str, backend: str) -> None:
     print(f"  reset benchmark ({backend}): first={first:.3f}s second={second:.3f}s")
 
 
-def _assert_sar_features(obs: dict, env_id: str) -> None:
+from envs.seq_wrapper import sar_feat_dim, sar_has_walls_lidar
+AGENT_DIM = 16
+def _assert_sar_features(obs: dict, env, env_id: str) -> None:
     features = obs["features"]
-    assert features.shape == (EXPECTED_FEAT_DIM,), features.shape
-    buildings_slice = features[LIDAR_BINS:2 * LIDAR_BINS]
-    reach_slice = features[2 * LIDAR_BINS:3 * LIDAR_BINS]
-    avoid_slice = features[3 * LIDAR_BINS:]
-    assert buildings_slice.shape == (LIDAR_BINS,)
-    assert reach_slice.shape == (LIDAR_BINS,)
-    assert avoid_slice.shape == (LIDAR_BINS,)
-    print(f"  buildings_lidar max: {buildings_slice.max():.4f}")
-    print(f"  reach_lidar max: {reach_slice.max():.4f}")
-    print(f"  avoid_lidar max: {avoid_slice.max():.4f}")
-
-
+    include_walls = sar_has_walls_lidar(env)
+    expected = sar_feat_dim(LIDAR_BINS, include_walls_lidar=include_walls)
+    assert features.shape == (expected,), features.shape
+    off = AGENT_DIM
+    buildings = features[off: off + LIDAR_BINS]; off += LIDAR_BINS
+    print(f"  buildings_lidar max: {buildings.max():.4f}")
+    if include_walls:
+        walls = features[off: off + LIDAR_BINS]; off += LIDAR_BINS
+        assert walls.shape == (LIDAR_BINS,)
+        print(f"  walls_lidar max: {walls.max():.4f}")
+    reach = features[off: off + LIDAR_BINS]; off += LIDAR_BINS
+    avoid = features[off: off + LIDAR_BINS]
+    assert reach.shape == (LIDAR_BINS,)
+    assert avoid.shape == (LIDAR_BINS,)
+    print(f"  reach_lidar max: {reach.max():.4f}")
+    print(f"  avoid_lidar max: {avoid.max():.4f}")
+from envs.seq_wrapper import sar_agent_obs
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--benchmark-reset", action="store_true")
@@ -69,7 +74,7 @@ def main():
             sar_env_backend=cli.sar_env_backend,
         )
         obs = env.reset(seed=0)
-        _assert_sar_features(obs, env_id)
+        _assert_sar_features(obs, env, env_id)
         print(env_id)
         print("  propositions:", env.get_propositions())
         team = [p for p in env.get_propositions() if p.startswith("all_")]
@@ -79,6 +84,12 @@ def main():
         print("  goal len:", len(obs["goal"]))
         print("  reset props:", obs["propositions"])
         print(f"obs={obs}")
+
+        # Raw per-agent sensor/lidar keys (walls_lidar_0, etc.)
+        raw = sar_agent_obs(env, agent_idx=0)
+        print("raw agent_0 keys:", sorted(raw.keys()))
+        # Lidar-related only
+        print("lidar keys:", [k for k in sorted(raw.keys()) if "lidar" in k or "wall" in k])
         env.close()
 
 
