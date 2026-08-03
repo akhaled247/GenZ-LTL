@@ -67,11 +67,12 @@ def ma_step_done(
 
 
 def ma_episode_success(info: dict[str, Any], agents: list[str]) -> bool:
-    if info.get("success"):
+    """True if Büchi success or SAR mission complete (goal_met / all rescued)."""
+    if info.get("success") or info.get("goal_met"):
         return True
     for agent in agents:
         ai = info.get(agent, {})
-        if isinstance(ai, dict) and ai.get("success"):
+        if isinstance(ai, dict) and (ai.get("success") or ai.get("goal_met")):
             return True
     return False
 
@@ -86,6 +87,15 @@ def ma_episode_violation(info: dict[str, Any], agents: list[str]) -> bool:
     return False
 
 
+def _info_goal_met(info: dict[str, Any]) -> bool:
+    if info.get("goal_met"):
+        return True
+    for value in info.values():
+        if isinstance(value, dict) and value.get("goal_met"):
+            return True
+    return False
+
+
 def print_ma_episode_done_debug(env: Any, info: dict[str, Any], *, step: int | None = None) -> None:
     """Print termination diagnostics when an MA deploy episode ends."""
     task = sar_task(env)
@@ -95,12 +105,7 @@ def print_ma_episode_done_debug(env: Any, info: dict[str, Any], *, step: int | N
     entrapped_rescued = list(entrapped_geom.rescued) if entrapped_geom is not None else None
 
     header = f"[MA done debug] step={step}" if step is not None else "[MA done debug]"
-    goal_met = info.get("goal_met")
-    if goal_met is None:
-        for value in info.values():
-            if isinstance(value, dict) and "goal_met" in value:
-                goal_met = value.get("goal_met")
-                break
+    goal_met = _info_goal_met(info)
 
     print(header)
     print(f"  success (Büchi): {info.get('success')}")

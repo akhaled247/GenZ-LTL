@@ -6,7 +6,12 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from envs.sar_deploy import resolve_sar_feat_shape, sar_preprocess_for_deploy
+from envs.sar_deploy import (
+    ma_episode_success,
+    ma_episode_violation,
+    resolve_sar_feat_shape,
+    sar_preprocess_for_deploy,
+)
 from model.model import infer_model_safety_shapes
 from tests.test_build_model_safety import _fake_safety_state_dict
 
@@ -36,6 +41,21 @@ def test_sar_preprocess_for_deploy_passes_feat_shape():
         allow_legacy_padding=True,
     )
     assert out.shape == (96,)
+
+
+def test_ma_episode_success_from_goal_met():
+    agents = ["agent_0", "agent_1"]
+    assert ma_episode_success({"goal_met": True}, agents)
+    assert ma_episode_success({"agent_0": {"goal_met": True}}, agents)
+    assert ma_episode_success({"success": True}, agents)
+    assert not ma_episode_success({"violation": True}, agents)
+
+
+def test_ma_episode_violation():
+    agents = ["agent_0", "agent_1"]
+    assert ma_episode_violation({"violation": True}, agents)
+    assert ma_episode_violation({"agent_1": {"violation": True}}, agents)
+    assert not ma_episode_violation({"success": True}, agents)
 
 
 def test_infer_shapes_raw_feature_dim_matches_preprocess_for_legacy_checkpoint():

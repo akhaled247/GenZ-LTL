@@ -144,6 +144,10 @@ class LDBAWrapper(gymnasium.Wrapper):
             # Update the self.states such that the accepting one is the first
             if (i := accepting_indices[0]) != 0:
                 self.states[0], self.states[i] = self.states[i], self.states[0]
+        elif info.get('goal_met') and not info.get('violation'):
+            # SAR mission complete can terminate before finite Büchi reaches an
+            # accepting state on the same step — count as deploy success.
+            info['success'] = True
         
         if prev_state_indices != [s.state for s in self.states]:
             # Note that states are sorted by index
