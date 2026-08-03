@@ -87,6 +87,25 @@ def ma_episode_violation(info: dict[str, Any], agents: list[str]) -> bool:
     return False
 
 
+def ma_step_saw_walls(info: dict[str, Any], agents: list[str]) -> bool:
+    """True if any agent reported ``cost_walls`` on this step."""
+    for agent in agents:
+        ai = info.get(agent, {})
+        if isinstance(ai, dict) and float(ai.get("cost_walls", 0) or 0) > 0:
+            return True
+    return False
+
+
+def ma_agent_cost_walls(info: dict[str, Any], agents: list[str]) -> dict[str, float]:
+    """Per-agent wall cost on the current step (0 when absent)."""
+    out: dict[str, float] = {}
+    for agent in agents:
+        ai = info.get(agent, {})
+        if isinstance(ai, dict):
+            out[agent] = float(ai.get("cost_walls", 0) or 0)
+    return out
+
+
 def _info_goal_met(info: dict[str, Any]) -> bool:
     if info.get("goal_met"):
         return True
@@ -96,9 +115,17 @@ def _info_goal_met(info: dict[str, Any]) -> bool:
     return False
 
 
-def print_ma_episode_done_debug(env: Any, info: dict[str, Any], *, step: int | None = None) -> None:
+def print_ma_episode_done_debug(
+    env: Any,
+    info: dict[str, Any],
+    *,
+    step: int | None = None,
+    saw_walls: bool | None = None,
+) -> None:
     """Print termination diagnostics when an MA deploy episode ends."""
     task = sar_task(env)
+    num_agents = getattr(task, "agent_num", 2)
+    agents = [f"agent_{i}" for i in range(num_agents)]
     surface_geom = getattr(task, "surface_casualtys", None)
     entrapped_geom = getattr(task, "entrapped_casualtys", None)
     surface_rescued = list(surface_geom.rescued) if surface_geom is not None else None
@@ -106,11 +133,17 @@ def print_ma_episode_done_debug(env: Any, info: dict[str, Any], *, step: int | N
 
     header = f"[MA done debug] step={step}" if step is not None else "[MA done debug]"
     goal_met = _info_goal_met(info)
+    cost_walls = ma_agent_cost_walls(info, agents)
+    wall_violation = saw_walls if saw_walls is not None else ma_step_saw_walls(info, agents)
 
     print(header)
     print(f"  success (Büchi): {info.get('success')}")
     print(f"  goal_met (mission): {goal_met}")
-    print(f"  violation: {info.get('violation')}")
+    print(f"  violation (LTL): {info.get('violation')}")
+    print(f"  wall_violation (WC): {wall_violation}")
+    print(f"  cost_walls (final step): {cost_walls}")
+    if info.get("cost") is not None:
+        print(f"  cost (WC): {info.get('cost')}")
     print(f"  propositions: {info.get('propositions')}")
     print(f"  surface_casualtys.rescued: {surface_rescued}")
     print(f"  entrapped_casualtys.rescued: {entrapped_rescued}")

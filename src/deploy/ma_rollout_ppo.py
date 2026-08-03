@@ -14,6 +14,7 @@ from envs.sar_deploy import (
     check_rabinizer,
     ma_episode_success,
     ma_episode_violation,
+    ma_step_saw_walls,
     print_ma_episode_done_debug,
 )
 from envs.seq_wrapper import sar_task
@@ -82,6 +83,7 @@ def simulate_ma_ppo(
         coordinator.reset()
         done = False
         num_steps = 0
+        saw_walls = False
         while not done:
             try:
                 action = coordinator.get_action(obs, info, deterministic=deterministic)
@@ -91,9 +93,13 @@ def simulate_ma_ppo(
                 break
             obs, reward, done, info = env.step(action)
             num_steps += 1
+            if ma_step_saw_walls(info, agent_keys):
+                saw_walls = True
             if done:
                 if render or debug_done:
-                    print_ma_episode_done_debug(env, info, step=num_steps)
+                    print_ma_episode_done_debug(
+                        env, info, step=num_steps, saw_walls=saw_walls,
+                    )
                 success = ma_episode_success(info, agent_keys)
                 violation = ma_episode_violation(info, agent_keys)
                 if success:

@@ -7,8 +7,10 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 
 from envs.sar_deploy import (
+    ma_agent_cost_walls,
     ma_episode_success,
     ma_episode_violation,
+    ma_step_saw_walls,
     resolve_sar_feat_shape,
     sar_preprocess_for_deploy,
 )
@@ -56,6 +58,22 @@ def test_ma_episode_violation():
     assert ma_episode_violation({"violation": True}, agents)
     assert ma_episode_violation({"agent_1": {"violation": True}}, agents)
     assert not ma_episode_violation({"success": True}, agents)
+
+
+def test_ma_step_saw_walls():
+    agents = ["agent_0", "agent_1"]
+    assert not ma_step_saw_walls({}, agents)
+    assert ma_step_saw_walls({"agent_0": {"cost_walls": 1.0}}, agents)
+    assert not ma_step_saw_walls({"agent_1": {"cost_walls": 0.0}}, agents)
+
+
+def test_ma_agent_cost_walls():
+    agents = ["agent_0", "agent_1"]
+    assert ma_agent_cost_walls({}, agents) == {"agent_0": 0.0, "agent_1": 0.0}
+    assert ma_agent_cost_walls(
+        {"agent_0": {"cost_walls": 1.0}, "agent_1": {"cost_collision": 1.0}},
+        agents,
+    ) == {"agent_0": 1.0, "agent_1": 0.0}
 
 
 def test_infer_shapes_raw_feature_dim_matches_preprocess_for_legacy_checkpoint():
