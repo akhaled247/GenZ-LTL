@@ -10,8 +10,24 @@ MA_EVAL_ENV_DEFAULT = "PointLTL0MASAR2WC-v0"
 MA_EVAL_FORMULA_DEFAULT = (
     "((!surface_0 & !surface_1) U all_entrapped) & (F surface_0 & F surface_1)"
 )
+# Per-agent Until on pulse-only entrapped_i is fragile (no sticky props) — #54.
+_FRAGILE_MA_UNTIL_MARKERS = (
+    "U entrapped_0",
+    "U entrapped_1",
+)
 FEAT_RECIPE_SAR_V1 = "sar_v1"
 FEAT_RECIPE_LEGACY_V0 = "legacy_v0"
+
+
+def warn_if_fragile_ma_formula(formula: str) -> None:
+    """Print warning when MA formula uses per-agent entrapped Until (false violations)."""
+    compact = " ".join(formula.split())
+    if any(marker in compact for marker in _FRAGILE_MA_UNTIL_MARKERS):
+        print(
+            "WARNING: MA formula uses per-agent 'U entrapped_i' — entrapped props are "
+            "one-shot pulses, so Until often never releases (false violations). "
+            f"Prefer: {MA_EVAL_FORMULA_DEFAULT}"
+        )
 
 
 def deploy_meta_path(experiment_dir: str) -> str:

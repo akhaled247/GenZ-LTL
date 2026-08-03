@@ -66,7 +66,7 @@ PYTHONPATH=src/ python run_sar.py --script train_rco --name GenZ-SAR \
 PYTHONPATH=src/ python src/evaluation/simulate.py --env PointLTL0MASAR1WC-v0 --exp GenZ-SAR --seed 0 --formula "(!surface_0 U entrapped_0) & F surface_0"
 
 # Two-agent deploy eval (shared MASAR1WC checkpoint + coordinator on MASAR2WC)
-PYTHONPATH=src/ python src/evaluation/simulate_ma_sar.py --exp GenZ-SAR --seed 0 --formula "((!surface_0 U entrapped_0) & F surface_0) & ((!surface_1 U entrapped_1) & F surface_1)"
+PYTHONPATH=src/ python src/evaluation/simulate_ma_sar.py --exp GenZ-SAR --seed 0 --formula "((!surface_0 & !surface_1) U all_entrapped) & (F surface_0 & F surface_1)"
 ```
 
 SafePO uses the same train→deploy split; see `RISE-Training/rise_training/cmdp/ma_protocol.md`.

@@ -49,6 +49,9 @@ class LDBAWrapper(gymnasium.Wrapper):
                 # 16 dim for agent status, 16 dim for reach, and 16 dim for avoid
                 'features': spaces.Box(-np.inf, np.inf, (48,), dtype=np.float32)
             })
+            self.agent_obs_keys = [
+                "accelerometer", "velocimeter", "gyro", "magnetometer", "wall_sensor",
+            ]
         elif "SAR" in env.spec.id:
             task = sar_task(env)
             num_agents = getattr(task, "agent_num", 1)
@@ -76,7 +79,13 @@ class LDBAWrapper(gymnasium.Wrapper):
             self.observation_space = spaces.Dict({
                 'features': spaces.Box(0, 1, (obs_dim, obs_dim, 1), dtype=np.float32)
             })
-        self.agent_obs_keys = ["accelerometer", "velocimeter", "gyro", "magnetometer", "wall_sensor"]
+            self.agent_obs_keys = [
+                "accelerometer", "velocimeter", "gyro", "magnetometer", "wall_sensor",
+            ]
+        else:
+            self.agent_obs_keys = [
+                "accelerometer", "velocimeter", "gyro", "magnetometer", "wall_sensor",
+            ]
         self.region_order = env.get_propositions()
         self.terminate_on_acceptance = False
         self.ldba = None

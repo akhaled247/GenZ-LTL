@@ -22,7 +22,12 @@ from envs.seq_wrapper import sar_task
 from ltl import FixedSampler
 from sequence.search import ExhaustiveSearchSafety, NoPathsException
 from utils.train_device import resolve_training_device
-from utils.deploy_meta import MA_EVAL_ENV_DEFAULT, MA_EVAL_FORMULA_DEFAULT, FEAT_RECIPE_LEGACY_V0
+from utils.deploy_meta import (
+    MA_EVAL_ENV_DEFAULT,
+    MA_EVAL_FORMULA_DEFAULT,
+    FEAT_RECIPE_LEGACY_V0,
+    warn_if_fragile_ma_formula,
+)
 
 TRAIN_ENV = "PointLTL0MASAR1WC-v0"
 EVAL_ENV = MA_EVAL_ENV_DEFAULT
@@ -56,6 +61,8 @@ def simulate_ma_sar(
         formula = deploy_meta.get("ma_eval_formula", formula)
     if eval_env == EVAL_ENV:
         eval_env = deploy_meta.get("eval_env", eval_env)
+
+    warn_if_fragile_ma_formula(formula)
 
     if deploy_meta.get("feat_recipe") == FEAT_RECIPE_LEGACY_V0:
         print(

@@ -18,7 +18,7 @@ from envs.sar_deploy import (
 )
 from envs.seq_wrapper import sar_task
 from sequence.search import NoPathsException
-from utils.deploy_meta import MA_EVAL_ENV_DEFAULT, MA_EVAL_FORMULA_DEFAULT
+from utils.deploy_meta import MA_EVAL_ENV_DEFAULT, MA_EVAL_FORMULA_DEFAULT, warn_if_fragile_ma_formula
 
 TRAIN_ENV = "PointLTL0MASAR1WC-v0"
 EVAL_ENV = MA_EVAL_ENV_DEFAULT
@@ -41,6 +41,8 @@ def simulate_ma_ppo(
     random.seed(seed)
     np.random.seed(seed)
     torch.random.manual_seed(seed)
+
+    warn_if_fragile_ma_formula(formula)
 
     env, model, search, props, algo = build_sar_ltl_eval_stack(
         train_env,
