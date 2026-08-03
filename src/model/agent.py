@@ -19,7 +19,7 @@ class Agent:
         self.verbose = verbose
         self.sequence = None
         # Timeout mechanism
-        self.timeout = 300 # timeout if timeout else float('inf')
+        self.timeout = float('inf') # timeout if timeout else float('inf')
         self.current_goal_steps = 0
         self.device = device if device is not None else next(model.parameters()).device
 

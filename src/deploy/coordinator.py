@@ -35,7 +35,7 @@ class MultiAgentSARCoordinator:
         self.verbose = verbose
         self.sequence = None
         self.current_goal_steps = 0
-        self.timeout = 300
+        self.timeout = float('inf')
         dev = device if device is not None else next(model.parameters()).device
         self._forward_agent = Agent(env, model, search, propositions, verbose=verbose, device=dev)
 
