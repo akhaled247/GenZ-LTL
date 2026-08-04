@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import sys
+import os
+import traceback
 from multiprocessing import Pipe, get_context
 from typing import Any, Callable
 
@@ -10,26 +11,51 @@ import numpy as np
 
 
 def _mp_context() -> str:
-    return "fork" if sys.platform != "win32" else "spawn"
+    # Always spawn: parent already has MuJoCo probe + CUDA (model.to) before
+    # workers start. fork after that → silent worker death → ConnectionResetError.
+    method = os.environ.get("GENZ_MP_START_METHOD", "spawn").strip().lower()
+    if method not in {"spawn", "fork", "forkserver"}:
+        raise ValueError(f"Invalid GENZ_MP_START_METHOD={method!r}")
+    return method
 
 
 def _genz_worker(conn, env_fn: Callable[[], Any]) -> None:
-    env = env_fn()
+    try:
+        env = env_fn()
+    except BaseException:
+        try:
+            conn.send(("__error__", traceback.format_exc()))
+        except (BrokenPipeError, OSError):
+            pass
+        conn.close()
+        return
+
     while True:
-        cmd, data = conn.recv()
-        if cmd == "step":
-            obs, reward, done, info = env.step(data)
-            if done:
+        try:
+            cmd, data = conn.recv()
+        except EOFError:
+            return
+        try:
+            if cmd == "step":
+                obs, reward, done, info = env.step(data)
+                if done:
+                    obs = env.reset()
+                conn.send((obs, reward, done, info))
+            elif cmd == "reset":
                 obs = env.reset()
-            conn.send((obs, reward, done, info))
-        elif cmd == "reset":
-            obs = env.reset()
-            conn.send(obs)
-        elif cmd == "kill":
+                conn.send(obs)
+            elif cmd == "kill":
+                conn.close()
+                return
+            else:
+                raise NotImplementedError(cmd)
+        except BaseException:
+            try:
+                conn.send(("__error__", traceback.format_exc()))
+            except (BrokenPipeError, OSError):
+                pass
             conn.close()
             return
-        else:
-            raise NotImplementedError(cmd)
 
 
 class GenZSafetyAsyncEnv:
@@ -58,18 +84,34 @@ class GenZSafetyAsyncEnv:
             except (BrokenPipeError, OSError):
                 pass
 
+    def _recv(self, local: Any, idx: int) -> Any:
+        try:
+            msg = local.recv()
+        except (EOFError, ConnectionResetError, BrokenPipeError, OSError) as exc:
+            proc = self._processes[idx]
+            exitcode = proc.exitcode
+            raise RuntimeError(
+                f"Async env worker {idx} died during IPC "
+                f"(exitcode={exitcode}). Parent already had MuJoCo/CUDA; "
+                f"if this persists set GENZ_MP_START_METHOD=spawn (default). "
+                f"Underlying: {type(exc).__name__}: {exc}"
+            ) from exc
+        if isinstance(msg, tuple) and len(msg) == 2 and msg[0] == "__error__":
+            raise RuntimeError(f"Async env worker {idx} failed:\n{msg[1]}")
+        return msg
+
     def reset(self) -> list[Any]:
         for local in self._locals:
             local.send(("reset", None))
-        return [local.recv() for local in self._locals]
+        return [self._recv(local, i) for i, local in enumerate(self._locals)]
 
     def step(self, actions: np.ndarray) -> tuple[tuple, tuple, tuple, tuple]:
         if actions.ndim == 1:
             actions = actions.reshape(self.num_envs, -1)
         results = []
-        for local, action in zip(self._locals, actions):
+        for i, (local, action) in enumerate(zip(self._locals, actions)):
             local.send(("step", np.asarray(action)))
-            results.append(local.recv())
+            results.append(self._recv(local, i))
         return tuple(zip(*results))
 
     def close(self) -> None:

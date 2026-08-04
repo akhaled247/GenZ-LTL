@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Callable
 
 import gymnasium
@@ -56,18 +57,17 @@ def make_worker_env_thunk(
     sequence: bool,
     entr_bldg_obs: bool = False,
 ) -> Callable[[], gymnasium.Env]:
-    def _thunk() -> gymnasium.Env:
-        return _make_genz_worker_env(
-            env_name,
-            curriculum_name,
-            curriculum_stage,
-            seed,
-            rank,
-            max_steps,
-            sar_env_backend,
-            safety,
-            sequence,
-            entr_bldg_obs,
-        )
-
-    return _thunk
+    # partial of top-level fn — picklable under spawn (closures are not).
+    return partial(
+        _make_genz_worker_env,
+        env_name,
+        curriculum_name,
+        curriculum_stage,
+        seed,
+        rank,
+        max_steps,
+        sar_env_backend,
+        safety,
+        sequence,
+        entr_bldg_obs,
+    )
