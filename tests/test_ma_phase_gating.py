@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 from deploy.ma_phase_gating import (
     ENTRAPPED_TEAM,
     SURFACE_TEAM,
+    WALLS_PROP,
     gated_reach_avoid_for_features,
     should_use_ma_phase_gating,
 )
@@ -14,6 +15,8 @@ PROPS = {
     "surface_0", "surface_1", "entrapped_0", "entrapped_1",
     ENTRAPPED_TEAM, SURFACE_TEAM,
 }
+
+PROPS_WITH_WALLS = PROPS | {WALLS_PROP}
 
 
 def _mock_env(*, all_entrapped: bool):
@@ -41,12 +44,32 @@ def test_gated_entrapped_phase():
     }
 
 
+def test_gated_entrapped_phase_includes_walls():
+    env = _mock_env(all_entrapped=False)
+    reach, avoid = gated_reach_avoid_for_features(
+        env, frozenset(), frozenset(), PROPS_WITH_WALLS,
+    )
+    assert next(iter(reach)).get_true_propositions() == {ENTRAPPED_TEAM}
+    assert {next(iter(a.get_true_propositions())) for a in avoid} == {
+        "surface_0", "surface_1", SURFACE_TEAM, WALLS_PROP,
+    }
+
+
 def test_gated_surface_phase():
     env = _mock_env(all_entrapped=True)
     reach, avoid = gated_reach_avoid_for_features(env, frozenset(), frozenset(), PROPS)
     assert len(reach) == 1
     assert next(iter(reach)).get_true_propositions() == {SURFACE_TEAM}
     assert avoid == frozenset()
+
+
+def test_gated_surface_phase_keeps_walls_avoid():
+    env = _mock_env(all_entrapped=True)
+    reach, avoid = gated_reach_avoid_for_features(
+        env, frozenset(), frozenset(), PROPS_WITH_WALLS,
+    )
+    assert next(iter(reach)).get_true_propositions() == {SURFACE_TEAM}
+    assert {next(iter(a.get_true_propositions())) for a in avoid} == {WALLS_PROP}
 
 
 def test_passthrough_without_team_props():

@@ -8,6 +8,7 @@ from ltl.logic import Assignment, FrozenAssignment
 SURFACE_PROPS = ("surface_0", "surface_1", "all_surface")
 ENTRAPPED_TEAM = "all_entrapped"
 SURFACE_TEAM = "all_surface"
+WALLS_PROP = "walls"
 
 
 def should_use_ma_phase_gating(propositions: set[str] | frozenset[str]) -> bool:
@@ -37,6 +38,12 @@ def _all_entrapped_rescued(env: Any) -> bool:
     return all(geom.rescued)
 
 
+def _walls_avoid(propositions: set[str]) -> FrozenSet[FrozenAssignment]:
+    if WALLS_PROP not in propositions:
+        return frozenset()
+    return frozenset({_single_prop_assignment(WALLS_PROP, propositions)})
+
+
 def gated_reach_avoid_for_features(
     env: Any,
     reach: FrozenSet[FrozenAssignment],
@@ -46,7 +53,7 @@ def gated_reach_avoid_for_features(
     """Replace messy Büchi reach/avoid frozensets with two-phase SAR deploy features.
 
     Phase A (until all entrapped rescued): reach ``all_entrapped``; avoid all surface props.
-    Phase B: reach ``all_surface`` only; avoid empty.
+    Phase B: reach ``all_surface`` only; avoid empty (plus ``walls`` when in vocab).
 
     Büchi search / LTL tracking still uses the original ``sequence``; only policy features
     are gated so they match SA training (single reach prop, no LDBA label compounds).
@@ -60,14 +67,15 @@ def gated_reach_avoid_for_features(
         for p in SURFACE_PROPS
         if p in props
     )
+    walls_avoid = _walls_avoid(props)
 
     if not _all_entrapped_rescued(env):
         return (
             frozenset({_single_prop_assignment(ENTRAPPED_TEAM, props)}),
-            surface_avoid,
+            surface_avoid | walls_avoid,
         )
 
     return (
         frozenset({_single_prop_assignment(SURFACE_TEAM, props)}),
-        frozenset(),
+        walls_avoid,
     )

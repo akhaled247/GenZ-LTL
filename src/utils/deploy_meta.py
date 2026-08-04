@@ -8,7 +8,8 @@ from typing import Any
 DEPLOY_META_FILENAME = "deploy_meta.json"
 MA_EVAL_ENV_DEFAULT = "PointLTL0MASAR2WC-v0"
 MA_EVAL_FORMULA_DEFAULT = (
-    "((!surface_0 & !surface_1) U all_entrapped) & (F surface_0 & F surface_1)"
+    "(!walls U ((!surface_0 & !surface_1) U all_entrapped)) & "
+    "(!walls U (F surface_0 & F surface_1))"
 )
 # Per-agent Until on pulse-only entrapped_i is fragile (no sticky props) — #54.
 _FRAGILE_MA_UNTIL_MARKERS = (

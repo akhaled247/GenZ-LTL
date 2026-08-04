@@ -93,7 +93,9 @@ class EnumerateCurriculumStageZones(CurriculumStage):
     
     def get_all_combinations(self, propositions: list[str]):
         self._tasks, self._sample_prob = [], []
-        for reach in combinations(propositions, 1):
+        # ``walls`` is an LTL alphabet symbol for MA eval / avoid, not a reach target.
+        reach_props = [p for p in propositions if p != "walls"]
+        for reach in combinations(reach_props, 1):
             remaining = [p for p in propositions if p not in reach]  # Exclude "reach" elements
             
             # Choose elements for "avoid" from the remaining regions

@@ -57,6 +57,7 @@ env_to_tasks = {
     ],
 
     'PointLTL0MASAR2WC-v0': [
+        '(!walls U ((!surface_0 & !surface_1) U all_entrapped)) & (!walls U (F surface_0 & F surface_1))',
         '((!surface_0 & !surface_1) U all_entrapped) & (F surface_0 & F surface_1)',
         '(!surface_0 U entrapped_0) & F surface_0',
         '(!surface_1 U entrapped_1) & F surface_1',
@@ -67,6 +68,7 @@ env_to_tasks = {
     ],
 
     'PointLTL1MASAR2WC-v0': [
+            '(!walls U ((!surface_0 & !surface_1) U all_entrapped)) & (!walls U (F surface_0 & F surface_1))',
             '((!surface_0 & !surface_1) U all_entrapped) & (F surface_0 & F surface_1)',
             '(!surface_0 U entrapped_0) & F surface_0',
             '(!surface_1 U entrapped_1) & F surface_1',
@@ -76,6 +78,7 @@ env_to_tasks = {
         ],
 
     'PointLTL2MASAR2WC-v0': [
+            '(!walls U ((!surface_0 & !surface_1) U all_entrapped)) & (!walls U (F surface_0 & F surface_1))',
             '((!surface_0 & !surface_1) U all_entrapped) & (F surface_0 & F surface_1)',
             '(!surface_0 U entrapped_0) & F surface_0',
             '(!surface_1 U entrapped_1) & F surface_1',
