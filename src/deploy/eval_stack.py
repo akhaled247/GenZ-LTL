@@ -3,7 +3,13 @@ from __future__ import annotations
 
 from config import model_configs
 from deploy.checkpoint_kind import detect_rl_algo, ppo_model_config_key
-from deploy.feature_recipe import apply_zone_compat_deploy_meta, attach_model_deploy_fields, ensure_deploy_meta
+from deploy.feature_recipe import (
+    apply_zone_compat_deploy_meta,
+    attach_model_deploy_fields,
+    ensure_deploy_meta,
+    ensure_sar_v1_indep_lidars,
+    resolve_zone_compat,
+)
 from deploy.loading import load_model_for_deploy
 from deploy.ppo_loading import attach_ppo_sar_fields
 from envs import make_env, make_env_safety
@@ -65,17 +71,24 @@ def build_sar_ltl_eval_stack(
             deploy_meta = ensure_deploy_meta(
                 model_store.path, training_status, train_env, lidar_bins=16,
             )
+        else:
+            deploy_meta = dict(deploy_meta)
+            deploy_meta.setdefault("train_env", train_env)
+            deploy_meta = ensure_sar_v1_indep_lidars(deploy_meta, lidar_bins=16)
+
+        zone_compat = resolve_zone_compat(train_env, zone_compat)
         if zone_compat:
             deploy_meta = apply_zone_compat_deploy_meta(deploy_meta, lidar_bins=16)
 
         entr_bldg = bool(deploy_meta.get("entr_bldg_obs", False)) and not zone_compat
         if ma_deploy:
             model, loaded_meta, _ = load_model_for_deploy(train_env, exp, seed, formula)
+            deploy_meta = dict(loaded_meta or deploy_meta)
+            deploy_meta.setdefault("train_env", train_env)
+            deploy_meta = ensure_sar_v1_indep_lidars(deploy_meta, lidar_bins=16)
             if zone_compat:
-                deploy_meta = apply_zone_compat_deploy_meta(
-                    loaded_meta if loaded_meta else deploy_meta, lidar_bins=16,
-                )
-                attach_model_deploy_fields(model, deploy_meta)
+                deploy_meta = apply_zone_compat_deploy_meta(deploy_meta, lidar_bins=16)
+            attach_model_deploy_fields(model, deploy_meta)
             env = make_env_safety(
                 eval_env, sampler, flat=False, sequence=False,
                 render_mode=render_mode, max_steps=2500,
@@ -106,8 +119,7 @@ def build_sar_ltl_eval_stack(
                 model = build_model_safety(
                     env, training_status, config, deploy_meta=deploy_meta,
                 )
-                if zone_compat:
-                    attach_model_deploy_fields(model, deploy_meta)
+                attach_model_deploy_fields(model, deploy_meta)
         props = env.get_propositions()
         search = ExhaustiveSearchSafety(env, model, props, num_loops=2)
 

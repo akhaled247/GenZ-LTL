@@ -281,20 +281,22 @@ class LDBAWrapper(gymnasium.Wrapper):
             agent_idx: int = 0,
             feat_shape: tuple[int, ...] | None = None,
             allow_legacy_padding: bool = False,
+            zone_compat: bool | None = None,
     ) -> np.ndarray:
         keys = sar_agent_obs_keys(agent_idx)
+        zc = self.zone_compat if zone_compat is None else bool(zone_compat)
         if feat_shape is None:
             feat_shape = (
                 sar_feat_dim(
                     sar_task(self.env).lidar_conf.num_bins,
                     include_walls_lidar=sar_has_walls_lidar(self.env, agent_idx),
-                    zone_compat=self.zone_compat,
+                    zone_compat=zc,
                 ),
             )
         return pre_process_obs_sar(
             self.env, keys, reach, avoid, feat_shape,
             agent_idx=agent_idx, allow_legacy_padding=allow_legacy_padding,
             entr_bldg_obs=self.entr_bldg_obs,
-            zone_compat=self.zone_compat,
+            zone_compat=zc,
         )
 

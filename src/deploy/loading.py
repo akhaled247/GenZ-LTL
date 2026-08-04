@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import gymnasium
-
 from config import model_configs
 from deploy.feature_recipe import attach_model_deploy_fields, ensure_deploy_meta
 from envs import make_env_safety
@@ -14,6 +12,7 @@ from model.model import build_model_safety
 from utils.model_store import ModelStore
 from utils.train_device import resolve_training_device
 
+
 def load_model_for_deploy(
     train_env: str,
     exp: str,
@@ -22,7 +21,7 @@ def load_model_for_deploy(
     device: str = "cpu"
 ) -> tuple[Any, dict[str, Any], ModelStore]:
     if device != "cpu":
-          device = resolve_training_device(device)
+        device = resolve_training_device(device)
     model_store = ModelStore(train_env, exp, seed, None)
     training_status = model_store.load_training_status(map_location=device)
 
@@ -40,6 +39,7 @@ def load_model_for_deploy(
     config = model_configs[train_env]
     probe_env = make_env_safety(
         train_env, FixedSampler.partial(formula), flat=True, sequence=False,
+        zone_compat=False,
     )
     try:
         model = build_model_safety(

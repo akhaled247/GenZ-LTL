@@ -307,12 +307,23 @@ def build_model_safety(
     model_safety.raw_feature_dim = raw_feature_dim
     model_safety.input_feat_dim = raw_feature_dim  # legacy alias for MA eval scripts
     model_safety.use_subgoal_one_hot = use_subgoal_one_hot
-    from deploy.feature_recipe import infer_feat_recipe
+    from deploy.feature_recipe import infer_feat_recipe, is_zone_safety_train_env
     from envs.seq_wrapper import sar_task
 
     lidar_bins = sar_task(env).lidar_conf.num_bins
     if deploy_meta is not None:
         model_safety.feat_recipe = deploy_meta.get("feat_recipe", "sar_v1")
+        model_safety.train_env = deploy_meta.get("train_env")
     else:
         model_safety.feat_recipe = infer_feat_recipe(raw_feature_dim, lidar_bins)
+        model_safety.train_env = getattr(getattr(env, "spec", None), "id", None)
+    # SAR-trained models must keep independent buildings/walls (never zone_compat).
+    train_id = getattr(model_safety, "train_env", None) or getattr(
+        getattr(env, "spec", None), "id", None
+    )
+    if (
+        not is_zone_safety_train_env(train_id)
+        and model_safety.feat_recipe == "zone_compat"
+    ):
+        model_safety.feat_recipe = "sar_v1"
     return model_safety
