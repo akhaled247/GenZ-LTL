@@ -77,6 +77,7 @@ def simulate_ma_sar(
             "for paper-protocol deploy."
         )
 
+    entr_bldg_obs = bool(deploy_meta.get("entr_bldg_obs", False)) and not zone_compat
     sampler = FixedSampler.partial(formula)
     env = make_env_safety(
         eval_env,
@@ -85,7 +86,7 @@ def simulate_ma_sar(
         render_mode="human" if render else None,
         sar_env_backend="specrl",
         max_steps=2500,
-        entr_bldg_obs=bool(deploy_meta.get("entr_bldg_obs", False)) and not zone_compat,
+        entr_bldg_obs=entr_bldg_obs,
         zone_compat=zone_compat,
     )
     assert_sar_wc_paper_protocol(env)
@@ -131,7 +132,14 @@ def simulate_ma_sar(
             if done:
                 if render or debug_done:
                     print_ma_episode_done_debug(
-                        env, info, step=num_steps, saw_walls=saw_walls,
+                        env,
+                        info,
+                        step=num_steps,
+                        saw_walls=saw_walls,
+                        reach=coordinator.last_reach,
+                        avoid=coordinator.last_avoid,
+                        entr_bldg_obs=entr_bldg_obs,
+                        zone_compat=zone_compat,
                     )
                 success = ma_episode_success(info, agent_keys)
                 violation = (

@@ -98,7 +98,12 @@ def simulate_ma_ppo(
             if done:
                 if render or debug_done:
                     print_ma_episode_done_debug(
-                        env, info, step=num_steps, saw_walls=saw_walls,
+                        env,
+                        info,
+                        step=num_steps,
+                        saw_walls=saw_walls,
+                        reach=coordinator.last_reach,
+                        avoid=coordinator.last_avoid,
                     )
                 success = ma_episode_success(info, agent_keys)
                 violation = (

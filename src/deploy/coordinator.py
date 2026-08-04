@@ -36,12 +36,16 @@ class MultiAgentSARCoordinator:
         self.sequence = None
         self.current_goal_steps = 0
         self.timeout = float('inf')
+        self.last_reach = None
+        self.last_avoid = None
         dev = device if device is not None else next(model.parameters()).device
         self._forward_agent = Agent(env, model, search, propositions, verbose=verbose, device=dev)
 
     def reset(self) -> None:
         self.sequence = None
         self.current_goal_steps = 0
+        self.last_reach = None
+        self.last_avoid = None
         self._forward_agent.reset()
 
     def get_action(self, obs, info, deterministic: bool = False) -> dict[str, np.ndarray]:
@@ -78,6 +82,8 @@ class MultiAgentSARCoordinator:
         reach, avoid = gated_reach_avoid_for_features(
             self.env, reach, avoid, self.propositions,
         )
+        self.last_reach = reach
+        self.last_avoid = avoid
         if self.verbose:
             print(f"Feature reach/avoid: {reach} | {avoid}")
         actions: dict[str, np.ndarray] = {}

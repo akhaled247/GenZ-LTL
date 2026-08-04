@@ -5,12 +5,19 @@ import os
 import subprocess
 from typing import Any
 
+import numpy as np
+
 from deploy.feature_recipe import (
     allow_legacy_padding,
     resolve_feat_shape,
     sar_preprocess_for_deploy,
 )
-from envs.seq_wrapper import sar_feat_dim, sar_task
+from envs.seq_wrapper import (
+    lidar_for_assignments,
+    sar_agent_obs,
+    sar_task,
+    walls_lidar_key,
+)
 
 GENZ_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 RABINIZER_REL = os.path.join("rabinizer4", "bin", "ltl2ldba")
@@ -127,12 +134,21 @@ def _info_goal_met(info: dict[str, Any]) -> bool:
     return False
 
 
+def _fmt_lidar(arr: np.ndarray) -> str:
+    a = np.asarray(arr, dtype=float).reshape(-1)
+    return f"max={a.max():.3f} {np.array2string(a, precision=3, suppress_small=True)}"
+
+
 def print_ma_episode_done_debug(
     env: Any,
     info: dict[str, Any],
     *,
     step: int | None = None,
     saw_walls: bool | None = None,
+    reach: Any = None,
+    avoid: Any = None,
+    entr_bldg_obs: bool = False,
+    zone_compat: bool = False,
 ) -> None:
     """Print termination diagnostics when an MA deploy episode ends."""
     task = sar_task(env)
@@ -159,3 +175,34 @@ def print_ma_episode_done_debug(
     print(f"  propositions: {info.get('propositions')}")
     print(f"  surface_casualtys.rescued: {surface_rescued}")
     print(f"  entrapped_casualtys.rescued: {entrapped_rescued}")
+    if reach is not None or avoid is not None:
+        lidar_dim = int(task.lidar_conf.num_bins)
+        print(f"  reach set: {reach}")
+        print(f"  avoid set: {avoid}")
+        for agent_idx in range(num_agents):
+            original_obs = sar_agent_obs(env, agent_idx)
+            reach_obs = lidar_for_assignments(
+                original_obs,
+                reach or frozenset(),
+                lidar_dim,
+                agent_idx=agent_idx,
+                num_agents=num_agents,
+                for_reach=entr_bldg_obs,
+                zone_compat=zone_compat,
+            )
+            avoid_obs = lidar_for_assignments(
+                original_obs,
+                avoid or frozenset(),
+                lidar_dim,
+                agent_idx=agent_idx,
+                num_agents=num_agents,
+                zone_compat=zone_compat,
+            )
+            print(f"  agent_{agent_idx} reach_lidar: {_fmt_lidar(reach_obs)}")
+            print(f"  agent_{agent_idx} avoid_lidar: {_fmt_lidar(avoid_obs)}")
+            walls_key = walls_lidar_key(agent_idx)
+            if walls_key in original_obs:
+                print(
+                    f"  agent_{agent_idx} walls_lidar: "
+                    f"{_fmt_lidar(original_obs[walls_key])}"
+                )
