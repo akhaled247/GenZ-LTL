@@ -26,7 +26,7 @@ from utils.logging.text_logger import TextLogger
 from utils.logging.wandb_logger import WandbLogger
 from utils.model_store import ModelStore
 from envs.seq_wrapper import sar_task
-from utils.deploy_meta import build_deploy_meta, load_deploy_meta
+from utils.deploy_meta import build_deploy_meta, load_deploy_meta, FEAT_RECIPE_ZONE_COMPAT
 from deploy.feature_recipe import infer_feat_recipe
 from config import *
 
@@ -55,6 +55,12 @@ class Trainer:
             raise ValueError(
                 f"--entr-bldg-obs={self.args.entr_bldg_obs} does not match saved deploy_meta "
                 f"(entr_bldg_obs={deploy_meta.get('entr_bldg_obs', False)})."
+            )
+        saved_zone = deploy_meta.get("feat_recipe") == "zone_compat" if deploy_meta else False
+        if deploy_meta is not None and saved_zone != bool(self.args.zone_compat):
+            raise ValueError(
+                f"--zone-compat={self.args.zone_compat} does not match saved deploy_meta "
+                f"(feat_recipe={deploy_meta.get('feat_recipe')})."
             )
         num_propositions = len(get_env_attr(envs[0], 'get_propositions')())
         model = build_model_safety(
@@ -142,14 +148,18 @@ class Trainer:
             else actor_input_dim - subgoal_dim
         )
         lidar_bins = sar_task(env).lidar_conf.num_bins
+        recipe = (
+            FEAT_RECIPE_ZONE_COMPAT if self.args.zone_compat
+            else infer_feat_recipe(raw_feature_dim, lidar_bins)
+        )
         meta = build_deploy_meta(
             train_env=self.args.experiment.env,
             raw_feature_dim=raw_feature_dim,
             use_env_net=use_env_net,
             actor_input_dim=actor_input_dim,
-            feat_recipe=infer_feat_recipe(raw_feature_dim, lidar_bins),
+            feat_recipe=recipe,
             use_subgoal_one_hot=self.args.one_hot,
-            entr_bldg_obs=self.args.entr_bldg_obs,
+            entr_bldg_obs=False if self.args.zone_compat else self.args.entr_bldg_obs,
             num_propositions=num_props,
         )
         path = self.model_store.save_deploy_meta(meta)
@@ -166,7 +176,8 @@ class Trainer:
             sequence=True,
             sar_env_backend=self.args.experiment.sar_env_backend,
             max_steps=2500,
-            entr_bldg_obs=self.args.entr_bldg_obs,
+            entr_bldg_obs=False if self.args.zone_compat else self.args.entr_bldg_obs,
+            zone_compat=self.args.zone_compat,
         )
 
     def async_factory_kwargs(self, curriculum_stage: int) -> dict[str, Any]:
@@ -180,7 +191,8 @@ class Trainer:
             "sar_env_backend": self.args.experiment.sar_env_backend,
             "safety": True,
             "sequence": True,
-            "entr_bldg_obs": self.args.entr_bldg_obs,
+            "entr_bldg_obs": False if self.args.zone_compat else self.args.entr_bldg_obs,
+            "zone_compat": self.args.zone_compat,
         }
 
     def make_envs(self, curriculum_stage: int) -> list[gymnasium.Env]:
@@ -284,6 +296,14 @@ def parse_arguments() -> argparse.Namespace:
         dest='entr_bldg_obs',
         help='Max-pool building lidar into entrapped reach subgoal lidar slice.',
     )
+    parser.add_argument(
+        '--zone-compat',
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        dest='zone_compat',
+        help='48-d zones-like SAR features (agent|reach|avoid); always max(building,entrapped); '
+             'use with walls-always-in-avoid curriculum on L1 WC.',
+    )
     args = parser.parse_args()
     args.rco.cost_clipping = args.cost_clipping
 
@@ -291,6 +311,8 @@ def parse_arguments() -> argparse.Namespace:
 
     if args.pretraining_experiment is None and args.freeze_pretrained:
         raise ValueError("Cannot freeze without providing a pretrained model.")
+    if args.zone_compat and args.entr_bldg_obs:
+        raise ValueError("--zone-compat already pools buildings into entrapped; omit --entr-bldg-obs.")
     return args
 
 

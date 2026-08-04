@@ -21,6 +21,7 @@ def _make_genz_worker_env(
     safety: bool,
     sequence: bool,
     entr_bldg_obs: bool = False,
+    zone_compat: bool = False,
 ) -> gymnasium.Env:
     """Top-level factory for multiprocessing workers (Windows spawn-safe)."""
     ensure_genz_paths()
@@ -32,15 +33,24 @@ def _make_genz_worker_env(
     curriculum.stage_index = curriculum_stage
     sampler = CurriculumSampler.partial(curriculum)
     worker_seed = seed + rank
-    factory: Callable = make_env_safety if safety else make_env
-    env = factory(
-        env_name,
-        sampler,
-        max_steps=max_steps,
-        sequence=sequence,
-        sar_env_backend=sar_env_backend,
-        entr_bldg_obs=entr_bldg_obs,
-    )
+    if safety:
+        env = make_env_safety(
+            env_name,
+            sampler,
+            max_steps=max_steps,
+            sequence=sequence,
+            sar_env_backend=sar_env_backend,
+            entr_bldg_obs=entr_bldg_obs,
+            zone_compat=zone_compat,
+        )
+    else:
+        env = make_env(
+            env_name,
+            sampler,
+            max_steps=max_steps,
+            sequence=sequence,
+            sar_env_backend=sar_env_backend,
+        )
     env.reset(seed=worker_seed)
     return env
 
@@ -56,6 +66,7 @@ def make_worker_env_thunk(
     safety: bool,
     sequence: bool,
     entr_bldg_obs: bool = False,
+    zone_compat: bool = False,
 ) -> Callable[[], gymnasium.Env]:
     # partial of top-level fn — picklable under spawn (closures are not).
     return partial(
@@ -70,4 +81,5 @@ def make_worker_env_thunk(
         safety,
         sequence,
         entr_bldg_obs,
+        zone_compat,
     )
