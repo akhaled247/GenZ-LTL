@@ -276,7 +276,7 @@ def main() -> None:
 
     cols, rows = _grid_shape(len(scenes))
     fig = draw_sar_trajectories(scenes, paths_list, titles, cols, rows)
-    out = args.out or f"{eval_env}_{args.exp}_s{seed}_trajectories.png"
+    out = args.out or f"experiments/rco/{train_env}/{args.exp}/{eval_env}_s{seed}_trajectories.png"
     fig.savefig(out, dpi=300)
     print(f"Wrote {out}")
     plt.close(fig)

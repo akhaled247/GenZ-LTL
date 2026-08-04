@@ -15,10 +15,10 @@ DEFAULT_EXTENTS = (-3.5, -3.5, 3.5, 3.5)
 
 # Distinct agent path colors (tab10-ish, readable on light floor).
 _AGENT_COLORS = (
-    "#1f77b4",
-    "#ff7f0e",
-    "#2ca02c",
-    "#d62728",
+    "#991fb4",
+    "#6556A1",
+    "#84c1da",
+    "#35a451",
     "#9467bd",
     "#8c564b",
     "#e377c2",
@@ -27,10 +27,10 @@ _AGENT_COLORS = (
 
 _COLOR_BORDER = "#212121"
 _COLOR_INTERIOR = "#757575"
-_COLOR_BUILDING_FILL = "#c47a5a"
+_COLOR_BUILDING_FILL = "#d7b4a5"
 _COLOR_BUILDING_WALL = "#8d4a2b"
-_COLOR_SURFACE = "#2196f3"
-_COLOR_ENTRAPPED = "#ef6c00"
+_COLOR_SURFACE = "#f1da0a"
+_COLOR_ENTRAPPED = "#ef0000"
 
 
 @dataclass
