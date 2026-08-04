@@ -298,7 +298,12 @@ def build_model_safety(
     )
 
     if state_dict is not None:
-        model_safety.load_state_dict(state_dict, strict=use_env_net)
+        # Older Zone/RCO ckpts may still store PPO-era ltl_net weights; ModelSafety
+        # sets ltl_net=None and never uses them — drop before strict load.
+        filtered = {
+            k: v for k, v in state_dict.items() if not k.startswith("ltl_net.")
+        }
+        model_safety.load_state_dict(filtered, strict=use_env_net)
     model_safety.raw_feature_dim = raw_feature_dim
     model_safety.input_feat_dim = raw_feature_dim  # legacy alias for MA eval scripts
     model_safety.use_subgoal_one_hot = use_subgoal_one_hot
