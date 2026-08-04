@@ -35,10 +35,17 @@ from deploy.loading import load_model_for_deploy  # noqa: E402
 from envs import make_env_safety  # noqa: E402
 from envs.env_utils import get_env_attr  # noqa: E402
 from envs.sar_deploy import check_rabinizer  # noqa: E402
-from envs.seq_wrapper import sar_task  # noqa: E402
+from envs.seq_wrapper import (  # noqa: E402
+    lidar_for_assignments,
+    sar_agent_obs,
+    sar_task,
+)
 from ltl import FixedSampler  # noqa: E402
+from ltl.automata import LDBASequence  # noqa: E402
 from model.agent import Agent  # noqa: E402
 from sequence.search import ExhaustiveSearchSafety, NoPathsException  # noqa: E402
+from sequence.search.exhaustive_search import strip_walls_from_reach_set  # noqa: E402
+from utils.deploy_meta import FEAT_RECIPE_ZONE_COMPAT  # noqa: E402
 from utils.train_device import resolve_training_device  # noqa: E402
 from visualize.sar import draw_sar_trajectories, snapshot_sar_scene  # noqa: E402
 
@@ -53,12 +60,227 @@ def _agent_num_from_env_id(env_id: str) -> int | None:
     return int(m.group(1))
 
 
-def _episode_title(formula: str, info: dict) -> str:
+def _episode_outcome(info: dict) -> str:
     if "success" in info:
-        return f"{formula}_success"
+        return "success"
     if "violation" in info:
-        return f"{formula}_violation"
-    return f"{formula}_not_finish"
+        return "violation"
+    return "not_finish"
+
+
+def _assignment_props(assignment) -> set[str]:
+    return set(assignment.get_true_propositions())
+
+
+def _reach_props(reach) -> set[str]:
+    if reach == LDBASequence.EPSILON:
+        return set()
+    props: set[str] = set()
+    for assignment in reach:
+        props |= _assignment_props(assignment)
+    return props
+
+
+def _avoid_props(avoid) -> set[str]:
+    props: set[str] = set()
+    for assignment in avoid:
+        props |= _assignment_props(assignment)
+    return props
+
+
+def _props_csv(props: set[str] | frozenset[str]) -> str:
+    return ",".join(sorted(props)) if props else "-"
+
+
+def _format_stage(reach, avoid) -> str:
+    if reach == LDBASequence.EPSILON:
+        r = "ε"
+    else:
+        r = _props_csv(_reach_props(reach))
+    a = _props_csv(_avoid_props(avoid))
+    return f"R={{{r}}} A={{{a}}}"
+
+
+def _format_sequence(seq) -> str:
+    if seq is None:
+        return "seq=None"
+    stages = [_format_stage(reach, avoid) for reach, avoid in seq]
+    return " → ".join(stages) if stages else "seq=[]"
+
+
+def _active_reach_avoid(seq, propositions):
+    """Return sanitized first-stage reach/avoid used for features (or None)."""
+    if seq is None or len(seq) == 0:
+        return None
+    reach, avoid = seq[0]
+    if reach == LDBASequence.EPSILON:
+        return reach, avoid
+    stripped = strip_walls_from_reach_set(reach, avoid, propositions)
+    return stripped if stripped is not None else (reach, avoid)
+
+
+def _casualty_xy_for_prop(task, prop: str) -> np.ndarray | None:
+    """World XY of the casualty geom named by ``surface_i`` / ``entrapped_i``."""
+    m = re.fullmatch(r"(surface|entrapped)_(\d+)", prop)
+    if not m:
+        return None
+    kind, idx_s = m.group(1), int(m.group(2))
+    geom = getattr(task, f"{kind}_casualtys", None)
+    if geom is None or int(getattr(geom, "num", 0) or 0) <= idx_s:
+        return None
+    try:
+        engine = geom.engine
+        prefix = geom.name[:-1]
+        body = engine.data.body(f"{prefix}{idx_s}")
+        return np.asarray(body.xpos, dtype=float)[:2].copy()
+    except Exception:  # noqa: BLE001
+        pos = np.asarray(geom.pos[idx_s], dtype=float)
+        return pos[:2].copy()
+
+
+def _reach_goal_xy(task, reach) -> tuple[np.ndarray | None, list[str]]:
+    if reach == LDBASequence.EPSILON:
+        return None, []
+    props = sorted(_reach_props(reach))
+    for prop in props:
+        xy = _casualty_xy_for_prop(task, prop)
+        if xy is not None:
+            return xy, props
+    return None, props
+
+
+def _agent_mat_xy(task, agent_idx: int = 0) -> np.ndarray:
+    """2x2 world←ego rotation (columns = agent local axes in world)."""
+    mat = np.asarray(task.agent.get_agent_mat(agent_idx), dtype=float)
+    return mat[:2, :2]
+
+
+def _lidar_peak_world_dir(reach_lidar: np.ndarray, agent_mat_xy: np.ndarray) -> tuple[np.ndarray, float, int]:
+    """Peak reach-lidar bin → unit world direction + strength + bin index."""
+    lidar = np.asarray(reach_lidar, dtype=float).reshape(-1)
+    peak_bin = int(np.argmax(lidar))
+    strength = float(lidar[peak_bin])
+    n = max(1, lidar.size)
+    ego_theta = (peak_bin / n) * (2.0 * math.pi)
+    ego = np.array([math.cos(ego_theta), math.sin(ego_theta)], dtype=float)
+    world = agent_mat_xy @ ego
+    norm = float(np.linalg.norm(world))
+    if norm < 1e-8:
+        return np.zeros(2, dtype=float), strength, peak_bin
+    return world / norm, strength, peak_bin
+
+
+def _bearing_delta_deg(peak_dir: np.ndarray, goal_dir: np.ndarray) -> float | None:
+    pn = float(np.linalg.norm(peak_dir))
+    gn = float(np.linalg.norm(goal_dir))
+    if pn < 1e-8 or gn < 1e-8:
+        return None
+    cos_a = float(np.clip(np.dot(peak_dir / pn, goal_dir / gn), -1.0, 1.0))
+    return math.degrees(math.acos(cos_a))
+
+
+def _diagnose_reach_avoid(
+    *,
+    env,
+    seq,
+    propositions,
+    agent_idx: int = 0,
+    zone_compat: bool = False,
+    entr_bldg_obs: bool = False,
+) -> dict:
+    """Snapshot first-stage reach/avoid + lidar peak vs true casualty bearing."""
+    task = sar_task(env)
+    active = _active_reach_avoid(seq, propositions)
+    out: dict = {
+        "sequence": _format_sequence(seq),
+        "stage0": None,
+        "reach_props": [],
+        "avoid_props": [],
+        "goal_xy": None,
+        "origin": None,
+        "peak_dir": None,
+        "goal_dir": None,
+        "peak_strength": 0.0,
+        "peak_bin": -1,
+        "delta_deg": None,
+        "ok": False,
+        "note": "",
+    }
+    if active is None:
+        out["note"] = "no active reach/avoid"
+        return out
+    reach, avoid = active
+    out["stage0"] = _format_stage(reach, avoid)
+    if reach != LDBASequence.EPSILON:
+        out["reach_props"] = sorted(_reach_props(reach))
+    out["avoid_props"] = sorted(_avoid_props(avoid))
+
+    origin = np.asarray(task.agent.get_agent_pos(agent_idx), dtype=float)[:2].copy()
+    out["origin"] = origin
+    goal_xy, props = _reach_goal_xy(task, reach)
+    out["goal_xy"] = goal_xy
+    out["reach_props"] = props or out["reach_props"]
+
+    if reach == LDBASequence.EPSILON:
+        out["note"] = "epsilon reach stage"
+        return out
+
+    lidar_dim = int(task.lidar_conf.num_bins)
+    original_obs = sar_agent_obs(env, agent_idx)
+    num_agents = int(getattr(task, "agent_num", 1) or 1)
+    reach_lidar = lidar_for_assignments(
+        original_obs, reach, lidar_dim, agent_idx=agent_idx, num_agents=num_agents,
+        for_reach=entr_bldg_obs,
+        zone_compat=zone_compat,
+    )
+    mat_xy = _agent_mat_xy(task, agent_idx)
+    peak_dir, strength, peak_bin = _lidar_peak_world_dir(reach_lidar, mat_xy)
+    out["peak_dir"] = peak_dir
+    out["peak_strength"] = strength
+    out["peak_bin"] = peak_bin
+
+    if goal_xy is None:
+        out["note"] = f"no geom for reach props {props}"
+        return out
+
+    goal_vec = goal_xy - origin
+    gn = float(np.linalg.norm(goal_vec))
+    if gn < 1e-8:
+        out["note"] = "agent already on goal"
+        return out
+    goal_dir = goal_vec / gn
+    out["goal_dir"] = goal_dir
+    delta = _bearing_delta_deg(peak_dir, goal_dir)
+    out["delta_deg"] = delta
+    if strength < 1e-6:
+        out["note"] = "reach lidar all-zero (goal maybe occluded / wrong keys)"
+    elif delta is not None and delta > 90.0:
+        out["note"] = f"reach lidar peak OPPOSITE goal (Δ={delta:.0f}°)"
+    elif delta is not None:
+        out["note"] = f"reach lidar ≈ goal (Δ={delta:.0f}°)"
+        out["ok"] = True
+    return out
+
+
+def _episode_title(outcome: str, diag: dict) -> str:
+    stage = diag.get("stage0") or "?"
+    delta = diag.get("delta_deg")
+    delta_s = f" Δ{delta:.0f}°" if delta is not None else ""
+    flag = ""
+    note = diag.get("note") or ""
+    if "OPPOSITE" in note or "all-zero" in note:
+        flag = " ⚠"
+    return f"{outcome} | {stage}{delta_s}{flag}"
+
+
+def _print_diag(ep: int, formula: str, diag: dict, outcome: str) -> None:
+    print(
+        f"[ep {ep}] {outcome} | formula={formula}\n"
+        f"  sequence: {diag.get('sequence')}\n"
+        f"  feature stage0: {diag.get('stage0')} | "
+        f"peak_bin={diag.get('peak_bin')} strength={diag.get('peak_strength'):.3f} | "
+        f"{diag.get('note')}"
+    )
 
 
 def _collect_agent_xy(task, num_agents: int) -> dict[str, np.ndarray]:
@@ -82,6 +304,17 @@ def _grid_shape(n: int) -> tuple[int, int]:
     return cols, rows
 
 
+def _overlay_from_diag(diag: dict) -> dict | None:
+    if diag.get("origin") is None:
+        return None
+    return {
+        "origin": diag["origin"],
+        "peak_dir": diag.get("peak_dir"),
+        "goal_dir": diag.get("goal_dir"),
+        "arrow_scale": 1.4,
+    }
+
+
 def _rollout_sa(
     *,
     train_env: str,
@@ -93,6 +326,7 @@ def _rollout_sa(
     deterministic: bool,
     zone_compat: bool,
     device: str,
+    debug_reach_avoid: bool,
 ):
     check_rabinizer()
     env, model, search, props, _algo = build_sar_ltl_eval_stack(
@@ -106,9 +340,14 @@ def _rollout_sa(
     )
     if device != "cpu":
         model = model.to(resolve_training_device(device))
-    agent = Agent(env, model, search=search, propositions=props, verbose=False)
+    agent = Agent(env, model, search=search, propositions=props, verbose=debug_reach_avoid)
+    # Match feature-recipe flags used by Agent.forward / sar_preprocess_for_deploy.
+    zone_compat_eff = bool(
+        getattr(model, "feat_recipe", None) == FEAT_RECIPE_ZONE_COMPAT or zone_compat
+    )
+    entr_bldg_obs = bool(getattr(model, "entr_bldg_obs", False)) and not zone_compat_eff
 
-    scenes, paths_list, titles = [], [], []
+    scenes, paths_list, titles, overlays = [], [], [], []
     success = violation = unreachable = 0
     pbar = trange(num_episodes)
     for i in pbar:
@@ -119,10 +358,26 @@ def _rollout_sa(
         scenes.append(snapshot_sar_scene(task))
         paths: dict[str, list[np.ndarray]] = {}
         _append_xy(paths, _collect_agent_xy(task, num_agents))
+        diag = {
+            "sequence": "seq=None",
+            "stage0": None,
+            "note": "no steps",
+            "delta_deg": None,
+            "peak_bin": -1,
+            "peak_strength": 0.0,
+            "origin": None,
+        }
         done = False
+        first = True
         while not done:
             try:
                 action = agent.get_action(obs, info, deterministic=deterministic)
+                if first:
+                    diag = _diagnose_reach_avoid(
+                        env=env, seq=agent.sequence, propositions=props, agent_idx=0,
+                        zone_compat=zone_compat_eff, entr_bldg_obs=entr_bldg_obs,
+                    )
+                    first = False
                 action = action.flatten()
                 if action.shape == (1,):
                     action = action[0]
@@ -132,7 +387,11 @@ def _rollout_sa(
                 unreachable += 1
                 done = True
         paths_list.append(paths)
-        titles.append(_episode_title(formula, info))
+        outcome = _episode_outcome(info)
+        titles.append(_episode_title(outcome, diag))
+        overlays.append(_overlay_from_diag(diag))
+        if debug_reach_avoid:
+            _print_diag(i, formula, diag, outcome)
         if "success" in info:
             success += 1
         elif "violation" in info:
@@ -141,7 +400,16 @@ def _rollout_sa(
 
     env.close()
     print(f"Formula: {formula}, Success: {success}, Violation: {violation}, Unreachable: {unreachable}")
-    return scenes, paths_list, titles
+    print(
+        "Note: walls already forced into avoid by sanitize_reach_avoid_walls — "
+        "wrapping formula with (!walls U ...) usually no-ops on feature reach/avoid."
+    )
+    if "PointLtlSafety" in train_env and "MASAR" in eval_env and not zone_compat_eff:
+        print(
+            "Hint: Zone→SAR deploy usually needs --zone-compat so reach/avoid packing "
+            "matches PointLtlSafety* (48-d). Without it, opposite headings are common."
+        )
+    return scenes, paths_list, titles, overlays
 
 
 def _rollout_ma(
@@ -155,6 +423,7 @@ def _rollout_ma(
     deterministic: bool,
     zone_compat: bool,
     device: str,
+    debug_reach_avoid: bool,
 ):
     check_rabinizer()
     if device != "cpu":
@@ -186,10 +455,10 @@ def _rollout_ma(
     props = get_env_attr(env, "get_propositions")()
     search = ExhaustiveSearchSafety(env, model, props, num_loops=2, device=device)
     coordinator = MultiAgentSARCoordinator(
-        env, model, search, props, num_agents, verbose=False, device=device,
+        env, model, search, props, num_agents, verbose=debug_reach_avoid, device=device,
     )
 
-    scenes, paths_list, titles = [], [], []
+    scenes, paths_list, titles, overlays = [], [], [], []
     success = violation = unreachable = 0
     pbar = trange(num_episodes)
     for i in pbar:
@@ -199,17 +468,37 @@ def _rollout_ma(
         scenes.append(snapshot_sar_scene(task))
         paths: dict[str, list[np.ndarray]] = {}
         _append_xy(paths, _collect_agent_xy(task, num_agents))
+        diag = {
+            "sequence": "seq=None",
+            "stage0": None,
+            "note": "no steps",
+            "delta_deg": None,
+            "peak_bin": -1,
+            "peak_strength": 0.0,
+            "origin": None,
+        }
         done = False
+        first = True
         while not done:
             try:
                 action = coordinator.get_action(obs, info, deterministic=deterministic)
+                if first:
+                    diag = _diagnose_reach_avoid(
+                        env=env, seq=coordinator.sequence, propositions=props, agent_idx=0,
+                        zone_compat=zone_compat, entr_bldg_obs=entr_bldg_obs,
+                    )
+                    first = False
                 obs, _reward, done, info = env.step(action)
                 _append_xy(paths, _collect_agent_xy(task, num_agents))
             except NoPathsException:
                 unreachable += 1
                 done = True
         paths_list.append(paths)
-        titles.append(_episode_title(formula, info))
+        outcome = _episode_outcome(info)
+        titles.append(_episode_title(outcome, diag))
+        overlays.append(_overlay_from_diag(diag))
+        if debug_reach_avoid:
+            _print_diag(i, formula, diag, outcome)
         if "success" in info:
             success += 1
         elif "violation" in info:
@@ -218,7 +507,11 @@ def _rollout_ma(
 
     env.close()
     print(f"Formula: {formula}, Success: {success}, Violation: {violation}, Unreachable: {unreachable}")
-    return scenes, paths_list, titles
+    print(
+        "Note: walls already forced into avoid by sanitize_reach_avoid_walls — "
+        "wrapping formula with (!walls U ...) usually no-ops on feature reach/avoid."
+    )
+    return scenes, paths_list, titles, overlays
 
 
 def main() -> None:
@@ -242,6 +535,13 @@ def main() -> None:
         action=argparse.BooleanOptionalAction,
         default=True,
     )
+    parser.add_argument(
+        "--debug-reach-avoid",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Print per-episode Büchi reach/avoid + lidar peak vs true goal bearing; "
+             "overlay arrows on plot (magenta=peak lidar, green=true goal).",
+    )
     args = parser.parse_args()
 
     eval_env = args.eval_env or args.env
@@ -262,7 +562,7 @@ def main() -> None:
         use_ma = True
 
     rollout = _rollout_ma if use_ma else _rollout_sa
-    scenes, paths_list, titles = rollout(
+    scenes, paths_list, titles, overlays = rollout(
         train_env=train_env,
         eval_env=eval_env,
         exp=args.exp,
@@ -272,10 +572,14 @@ def main() -> None:
         deterministic=args.deterministic,
         zone_compat=args.zone_compat,
         device=args.device,
+        debug_reach_avoid=args.debug_reach_avoid,
     )
 
     cols, rows = _grid_shape(len(scenes))
-    fig = draw_sar_trajectories(scenes, paths_list, titles, cols, rows)
+    fig = draw_sar_trajectories(
+        scenes, paths_list, titles, cols, rows,
+        overlays=overlays if args.debug_reach_avoid else None,
+    )
     out = args.out or f"experiments/rco/{train_env}/{args.exp}/{eval_env}_s{seed}_trajectories.png"
     fig.savefig(out, dpi=300)
     print(f"Wrote {out}")

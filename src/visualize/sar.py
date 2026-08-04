@@ -347,12 +347,66 @@ def draw_agent_paths(
         ax.legend(loc="upper right", fontsize=8, framealpha=0.7)
 
 
+def draw_reach_avoid_overlay(
+    ax,
+    overlay: dict[str, Any] | None,
+    *,
+    add_legend_proxies: bool = True,
+) -> None:
+    """Draw first-step reach peak (solid) + true goal bearing (dashed)."""
+    if not overlay:
+        return
+    origin = overlay.get("origin")
+    peak_dir = overlay.get("peak_dir")
+    goal_dir = overlay.get("goal_dir")
+    if origin is None:
+        return
+    o = np.asarray(origin, dtype=float)[:2]
+    scale = float(overlay.get("arrow_scale", 1.2))
+    if peak_dir is not None:
+        d = np.asarray(peak_dir, dtype=float)[:2]
+        n = float(np.linalg.norm(d))
+        if n > 1e-8:
+            d = d / n
+            tip = o + scale * d
+            ax.plot([o[0], tip[0]], [o[1], tip[1]], color="#c2185b", lw=2.0, zorder=12)
+            ax.annotate(
+                "",
+                xy=tip,
+                xytext=o + 0.85 * scale * d,
+                arrowprops=dict(arrowstyle="->", color="#c2185b", lw=2.0),
+                zorder=13,
+            )
+            if add_legend_proxies:
+                ax.plot([], [], color="#c2185b", lw=2.0, label="reach lidar peak")
+    if goal_dir is not None:
+        d = np.asarray(goal_dir, dtype=float)[:2]
+        n = float(np.linalg.norm(d))
+        if n > 1e-8:
+            d = d / n
+            tip = o + scale * d
+            ax.plot(
+                [o[0], tip[0]], [o[1], tip[1]],
+                color="#2e7d32", lw=2.0, linestyle="--", zorder=12,
+            )
+            ax.annotate(
+                "",
+                xy=tip,
+                xytext=o + 0.85 * scale * d,
+                arrowprops=dict(arrowstyle="->", color="#2e7d32", lw=2.0),
+                zorder=13,
+            )
+            if add_legend_proxies:
+                ax.plot([], [], color="#2e7d32", lw=2.0, linestyle="--", label="true reach goal")
+
+
 def draw_sar_trajectories(
     scenes: Sequence[SarSceneSnapshot],
     paths_list: Sequence[dict[str, Sequence[np.ndarray]]],
     titles: Sequence[str],
     num_cols: int,
     num_rows: int,
+    overlays: Sequence[dict[str, Any] | None] | None = None,
 ):
     """Grid of top-down SAR episodes (one scene + all agent paths per cell)."""
     if len(scenes) != len(paths_list):
@@ -361,15 +415,29 @@ def draw_sar_trajectories(
         raise ValueError("Number of scenes and titles must match")
     if num_cols * num_rows < len(scenes):
         raise ValueError("Number of scenes exceeds subplot grid")
+    if overlays is not None and len(overlays) != len(scenes):
+        raise ValueError("Number of overlays must match scenes")
 
     fig = plt.figure(figsize=(7.5 * num_cols, 7.0 * num_rows))
     for i, (scene, paths, title) in enumerate(zip(scenes, paths_list, titles)):
         ax = fig.add_subplot(
             num_rows, num_cols, i + 1, axes_class=FancyAxes, edgecolor="gray", linewidth=0.5,
         )
-        ax.set_title(title, fontsize=9)
+        ax.set_title(title, fontsize=8)
         setup_sar_axis(ax, scene.extents)
         draw_sar_scene(ax, scene)
-        draw_agent_paths(ax, paths, legend=(i == 0))
+        show_legend = i == 0
+        # Defer legend until after optional reach/avoid overlays so proxies share one box.
+        draw_agent_paths(ax, paths, legend=False)
+        if overlays is not None:
+            draw_reach_avoid_overlay(ax, overlays[i], add_legend_proxies=False)
+        if show_legend:
+            for j, key in enumerate(sorted(paths.keys())):
+                color = _AGENT_COLORS[j % len(_AGENT_COLORS)]
+                ax.plot([], [], color=color, linewidth=2.5, label=key)
+            if overlays is not None and overlays[i]:
+                ax.plot([], [], color="#c2185b", lw=2.0, label="reach lidar peak")
+                ax.plot([], [], color="#2e7d32", lw=2.0, linestyle="--", label="true reach goal")
+            ax.legend(loc="upper right", fontsize=7, framealpha=0.7)
     plt.tight_layout(pad=2.5)
     return fig
