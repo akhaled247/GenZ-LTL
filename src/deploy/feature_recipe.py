@@ -204,6 +204,9 @@ def sar_preprocess_for_deploy(
         feat_recipe=getattr(model, "feat_recipe", None),
     )
     if hasattr(env, "pre_process_obs_sar"):
+        strip_walls = bool(getattr(model, "strip_walls_avoid_lidar", False))
+        if hasattr(env, "strip_walls_avoid_lidar"):
+            strip_walls = strip_walls or bool(getattr(env, "strip_walls_avoid_lidar"))
         return env.pre_process_obs_sar(
             reach,
             avoid,
@@ -211,6 +214,7 @@ def sar_preprocess_for_deploy(
             feat_shape=feat_shape,
             allow_legacy_padding=legacy,
             zone_compat=zone_compat,
+            strip_walls_avoid_lidar=strip_walls,
         )
     if hasattr(env, "pre_process_obs_zones"):
         return env.pre_process_obs_zones(reach, avoid)

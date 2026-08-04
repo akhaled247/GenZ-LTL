@@ -123,3 +123,62 @@ def test_pre_process_zone_compat_omits_indep_buildings_and_walls():
     avoid_slice = feat[16 + lidar_dim:]
     np.testing.assert_allclose(reach_slice, building)
     np.testing.assert_allclose(avoid_slice, walls)
+
+
+def test_strip_walls_avoid_lidar_zeros_walls_in_avoid_features():
+    lidar_dim = 4
+    env, task = _mock_sar_env(lidar_dim)
+    keys = sar_agent_obs_keys(0)
+    dims = [3, 3, 3, 3, 4]
+    agent_obs = {k: np.zeros(d, dtype=np.float32) for k, d in zip(keys, dims)}
+    building = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+    walls = np.array([0.0, 0.9, 0.0, 0.0], dtype=np.float32)
+    surface = np.array([0.0, 0.0, 0.0, 0.4], dtype=np.float32)
+    agent_obs["terracotta_buildings_lidar_0"] = building
+    agent_obs["walls_lidar_0"] = walls
+    agent_obs["surface_casualtys_lidar_0"] = surface
+    agent_obs["entrapped_casualtys_lidar_0"] = np.zeros(lidar_dim, dtype=np.float32)
+
+    reach = frozenset([FrozenAssignment({"entrapped_0": True})])
+    avoid = frozenset([
+        FrozenAssignment({"walls": True}),
+        FrozenAssignment({"surface_0": True}),
+    ])
+    feat_dim = sar_feat_dim(lidar_dim, zone_compat=True)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("envs.seq_wrapper.sar_agent_obs", lambda _env, _idx=0: agent_obs)
+        mp.setattr("envs.seq_wrapper.sar_task", lambda _env: task)
+        feat_on = pre_process_obs_sar(
+            env, keys, reach, avoid, (feat_dim,),
+            zone_compat=True, strip_walls_avoid_lidar=True,
+        )
+        feat_off = pre_process_obs_sar(
+            env, keys, reach, avoid, (feat_dim,),
+            zone_compat=True, strip_walls_avoid_lidar=False,
+        )
+
+    avoid_on = feat_on[16 + lidar_dim:]
+    avoid_off = feat_off[16 + lidar_dim:]
+    np.testing.assert_allclose(avoid_on, surface)
+    np.testing.assert_allclose(avoid_off, np.maximum(walls, surface))
+
+
+def test_lidar_for_assignments_skip_walls_prop():
+    lidar_dim = 4
+    walls = np.array([0.0, 0.8, 0.0, 0.0], dtype=np.float64)
+    surface = np.array([0.0, 0.0, 0.0, 0.5], dtype=np.float64)
+    original_obs = {
+        "walls_lidar_0": walls,
+        "surface_casualtys_lidar_0": surface,
+    }
+    avoid = frozenset([
+        FrozenAssignment({"walls": True}),
+        FrozenAssignment({"surface_0": True}),
+    ])
+    full = lidar_for_assignments(original_obs, avoid, lidar_dim)
+    stripped = lidar_for_assignments(
+        original_obs, avoid, lidar_dim, skip_props={"walls"},
+    )
+    np.testing.assert_allclose(full, np.maximum(walls, surface))
+    np.testing.assert_allclose(stripped, surface)

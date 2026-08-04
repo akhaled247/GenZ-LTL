@@ -117,11 +117,15 @@ def lidar_for_assignments(
     *,
     for_reach: bool = False,
     zone_compat: bool = False,
+    skip_props: set[str] | frozenset[str] | None = None,
 ) -> np.ndarray:
     keys = []
     obs_keys = set(original_obs.keys())
+    skip = set(skip_props) if skip_props else set()
     for assignment in assignments:
         for prop in assignment.to_string():
+            if prop in skip:
+                continue
             keys.extend(lidar_keys_for_prop(
                 prop, agent_idx, num_agents, available_keys=obs_keys,
                 for_reach=for_reach,
@@ -171,6 +175,7 @@ def pre_process_obs_sar(
         allow_legacy_padding: bool = False,
         entr_bldg_obs: bool = False,
         zone_compat: bool = False,
+        strip_walls_avoid_lidar: bool = False,
 ) -> np.ndarray:
     original_obs = sar_agent_obs(env, agent_idx)
     lidar_dim = sar_task(env).lidar_conf.num_bins
@@ -190,9 +195,10 @@ def pre_process_obs_sar(
                 for_reach=entr_bldg_obs,
                 zone_compat=zone_compat,
             ))
+    avoid_skip = {"walls"} if strip_walls_avoid_lidar else set()
     for assignment in avoid:
         for prop in assignment.to_string():
-            if prop:
+            if prop and prop not in avoid_skip:
                 used_keys.update(lidar_keys_for_prop(
                     prop, agent_idx, num_agents, available_keys=obs_keys,
                     zone_compat=zone_compat,
@@ -218,6 +224,7 @@ def pre_process_obs_sar(
     avoid_obs = lidar_for_assignments(
         original_obs, avoid, lidar_dim, agent_idx=agent_idx, num_agents=num_agents,
         zone_compat=zone_compat,
+        skip_props=avoid_skip if avoid_skip else None,
     )
     obs = np.concatenate([*indep_parts, reach_obs, avoid_obs]).astype(np.float32)
     target = int(feat_shape[0])
@@ -347,6 +354,7 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
         super().__init__(env)
         self.entr_bldg_obs = bool(entr_bldg_obs)
         self.zone_compat = bool(zone_compat)
+        self.strip_walls_avoid_lidar = False
         self.region_order = get_env_attr(env, 'get_propositions')()
         if "SAR" in env.spec.id:
             self.agent_obs_keys = SAR_AGENT_OBS_KEYS
@@ -423,6 +431,7 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
                 self.observation_space['features'].shape,
                 entr_bldg_obs=self.entr_bldg_obs,
                 zone_compat=self.zone_compat,
+                strip_walls_avoid_lidar=self.strip_walls_avoid_lidar,
             )
         if "PointLtlSafety" in self.env.spec.id:
             return self.pre_process_obs_zones(reach, avoid)

@@ -44,6 +44,7 @@ class LDBAWrapper(gymnasium.Wrapper):
         super().__init__(env)
         self.entr_bldg_obs = bool(entr_bldg_obs)
         self.zone_compat = bool(zone_compat)
+        self.strip_walls_avoid_lidar = False
         
         if "PointLtlSafety" in env.spec.id:
             self.observation_space = spaces.Dict({
@@ -282,9 +283,15 @@ class LDBAWrapper(gymnasium.Wrapper):
             feat_shape: tuple[int, ...] | None = None,
             allow_legacy_padding: bool = False,
             zone_compat: bool | None = None,
+            strip_walls_avoid_lidar: bool | None = None,
     ) -> np.ndarray:
         keys = sar_agent_obs_keys(agent_idx)
         zc = self.zone_compat if zone_compat is None else bool(zone_compat)
+        strip = (
+            self.strip_walls_avoid_lidar
+            if strip_walls_avoid_lidar is None
+            else bool(strip_walls_avoid_lidar)
+        )
         if feat_shape is None:
             feat_shape = (
                 sar_feat_dim(
@@ -298,5 +305,6 @@ class LDBAWrapper(gymnasium.Wrapper):
             agent_idx=agent_idx, allow_legacy_padding=allow_legacy_padding,
             entr_bldg_obs=self.entr_bldg_obs,
             zone_compat=zc,
+            strip_walls_avoid_lidar=strip,
         )
 
