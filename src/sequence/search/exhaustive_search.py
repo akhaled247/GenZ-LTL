@@ -18,6 +18,53 @@ class NoPathsException(Exception):
 WALLS_PROP = "walls"
 
 
+def _is_surface_prop(name: str) -> bool:
+    return name == "all_surface" or name.startswith("surface_")
+
+
+def _is_entrapped_prop(name: str) -> bool:
+    return name == "all_entrapped" or name.startswith("entrapped_")
+
+
+def _assignment_true_props(assignment: FrozenAssignment) -> set[str]:
+    return set(assignment.get_true_propositions())
+
+
+def _reach_true_props(reach) -> set[str]:
+    if reach == LDBASequence.EPSILON:
+        return set()
+    props: set[str] = set()
+    for assignment in reach:
+        props |= _assignment_true_props(assignment)
+    return props
+
+
+def _avoid_true_props(avoid: frozenset[FrozenAssignment]) -> set[str]:
+    props: set[str] = set()
+    for assignment in avoid:
+        props |= _assignment_true_props(assignment)
+    return props
+
+
+def _expand_avoid_singles(
+    avoid: frozenset[FrozenAssignment],
+    propositions,
+) -> frozenset[FrozenAssignment]:
+    props = set(propositions) if not isinstance(propositions, set) else propositions
+    cleaned: list[FrozenAssignment] = []
+    seen: set[str] = set()
+    for a in avoid:
+        for p in _assignment_true_props(a):
+            if p == WALLS_PROP:
+                continue
+            if p not in seen:
+                seen.add(p)
+                cleaned.append(Assignment.single_proposition(p, props).to_frozen())
+    if WALLS_PROP in props:
+        cleaned.append(Assignment.single_proposition(WALLS_PROP, props).to_frozen())
+    return frozenset(cleaned)
+
+
 def sanitize_reach_avoid_walls(
     reach_assignment: FrozenAssignment,
     avoid: frozenset[FrozenAssignment],
@@ -25,33 +72,21 @@ def sanitize_reach_avoid_walls(
 ) -> tuple[frozenset[FrozenAssignment], frozenset[FrozenAssignment]] | None:
     """Strip ``walls`` from reach; always place it in avoid when in the alphabet.
 
-    LDBA feasible assignments may co-activate ``walls`` with a casualty prop.
-    Expanding those into single-prop reach targets would make walls lidar a
-    *goal* channel — the policy drives into walls.
+    Also drops any reach prop that appears in avoid (e.g. surface in both).
     """
     props = set(propositions) if not isinstance(propositions, set) else propositions
+    new_avoid = _expand_avoid_singles(avoid, props)
+    avoid_props = _avoid_true_props(new_avoid)
     reach_props = [
-        name for name, truth in reach_assignment if truth and name != WALLS_PROP
+        name for name, truth in reach_assignment
+        if truth and name != WALLS_PROP and name not in avoid_props
     ]
     if not reach_props:
         return None
     new_reach = frozenset(
         Assignment.single_proposition(p, props).to_frozen() for p in reach_props
     )
-    cleaned_avoid: list[FrozenAssignment] = []
-    for a in avoid:
-        true = a.get_true_propositions()
-        if true == frozenset({WALLS_PROP}):
-            continue
-        if WALLS_PROP in true:
-            for p in true:
-                if p != WALLS_PROP:
-                    cleaned_avoid.append(Assignment.single_proposition(p, props).to_frozen())
-        else:
-            cleaned_avoid.append(a)
-    if WALLS_PROP in props:
-        cleaned_avoid.append(Assignment.single_proposition(WALLS_PROP, props).to_frozen())
-    return new_reach, frozenset(cleaned_avoid)
+    return new_reach, new_avoid
 
 
 def strip_walls_from_reach_set(
@@ -61,27 +96,57 @@ def strip_walls_from_reach_set(
 ) -> tuple[frozenset[FrozenAssignment], frozenset[FrozenAssignment]] | None:
     """Sanitize a frozenset of reach assignments (one Büchi stage)."""
     props = set(propositions) if not isinstance(propositions, set) else propositions
+    new_avoid = _expand_avoid_singles(avoid, props)
+    avoid_props = _avoid_true_props(new_avoid)
     reach_props: list[str] = []
     for assignment in reach:
         for name, truth in assignment:
-            if truth and name != WALLS_PROP and name not in reach_props:
+            if (
+                truth
+                and name != WALLS_PROP
+                and name not in avoid_props
+                and name not in reach_props
+            ):
                 reach_props.append(name)
     if not reach_props:
         return None
     new_reach = frozenset(
         Assignment.single_proposition(p, props).to_frozen() for p in reach_props
     )
-    # Merge avoid via a dummy walls-free assignment pass.
-    dummy = Assignment.single_proposition(reach_props[0], props).to_frozen()
-    sanitized = sanitize_reach_avoid_walls(dummy, avoid, props)
-    if sanitized is None:
-        return None
-    _, new_avoid = sanitized
     return new_reach, new_avoid
 
 
+def sequence_has_reach_avoid_conflict(seq: LDBASequence) -> bool:
+    """True if any stage puts the same prop in both reach and avoid."""
+    for reach, avoid in seq:
+        if reach == LDBASequence.EPSILON:
+            continue
+        if _reach_true_props(reach) & _avoid_true_props(avoid):
+            return True
+    return False
+
+
+def sequence_has_surface_before_entrapped(seq: LDBASequence) -> bool:
+    """True if a surface reach stage appears before an entrapped reach stage.
+
+    Matches ``!surface U entrapped``. Allows surface-only sequences (valid after
+    Until is already satisfied in the LDBA state).
+    """
+    surface_idxs: list[int] = []
+    entrapped_idxs: list[int] = []
+    for i, (reach, _avoid) in enumerate(seq):
+        props = _reach_true_props(reach)
+        if any(_is_surface_prop(p) for p in props):
+            surface_idxs.append(i)
+        if any(_is_entrapped_prop(p) for p in props):
+            entrapped_idxs.append(i)
+    if surface_idxs and entrapped_idxs and min(surface_idxs) < min(entrapped_idxs):
+        return True
+    return False
+
+
 def sanitize_ldba_sequence_walls(seq: LDBASequence, propositions) -> LDBASequence | None:
-    """Apply walls reach/avoid sanitization to every stage of a sequence."""
+    """Apply walls/reach sanitization to every stage; drop invalid Until order."""
     stages: list[tuple[frozenset[FrozenAssignment], frozenset[FrozenAssignment]]] = []
     for reach, avoid in seq:
         if reach == LDBASequence.EPSILON:
@@ -93,7 +158,12 @@ def sanitize_ldba_sequence_walls(seq: LDBASequence, propositions) -> LDBASequenc
         stages.append(sanitized)
     if not stages:
         return None
-    return LDBASequence(stages)
+    out = LDBASequence(stages)
+    if sequence_has_reach_avoid_conflict(out):
+        return None
+    if sequence_has_surface_before_entrapped(out):
+        return None
+    return out
 
 
 @dataclass
