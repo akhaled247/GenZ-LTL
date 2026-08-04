@@ -10,6 +10,7 @@ from deploy.feature_recipe import sar_preprocess_for_deploy
 from deploy.ma_phase_gating import gated_reach_avoid_for_features
 from ltl.logic import Assignment
 from sequence.search import SequenceSearch
+from sequence.search.exhaustive_search import strip_walls_from_reach_set
 
 
 class MultiAgentSARCoordinator:
@@ -82,10 +83,17 @@ class MultiAgentSARCoordinator:
         reach, avoid = gated_reach_avoid_for_features(
             self.env, reach, avoid, self.propositions,
         )
+        # Belt-and-suspenders: never feed walls as a reach lidar target.
+        stripped = strip_walls_from_reach_set(reach, avoid, self.propositions)
+        if stripped is not None:
+            reach, avoid = stripped
         self.last_reach = reach
         self.last_avoid = avoid
         if self.verbose:
             print(f"Feature reach/avoid: {reach} | {avoid}")
+            reach_names = sorted({p for a in reach for p in a.get_true_propositions()})
+            if "walls" in reach_names:
+                print("ERROR: walls still in feature reach after sanitize — bug")
         actions: dict[str, np.ndarray] = {}
         for agent_idx in range(self.num_agents):
             obs_i = copy.deepcopy(obs)

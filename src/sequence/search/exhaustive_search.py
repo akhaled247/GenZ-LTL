@@ -15,6 +15,87 @@ class NoPathsException(Exception):
     pass
 
 
+WALLS_PROP = "walls"
+
+
+def sanitize_reach_avoid_walls(
+    reach_assignment: FrozenAssignment,
+    avoid: frozenset[FrozenAssignment],
+    propositions,
+) -> tuple[frozenset[FrozenAssignment], frozenset[FrozenAssignment]] | None:
+    """Strip ``walls`` from reach; always place it in avoid when in the alphabet.
+
+    LDBA feasible assignments may co-activate ``walls`` with a casualty prop.
+    Expanding those into single-prop reach targets would make walls lidar a
+    *goal* channel — the policy drives into walls.
+    """
+    props = set(propositions) if not isinstance(propositions, set) else propositions
+    reach_props = [
+        name for name, truth in reach_assignment if truth and name != WALLS_PROP
+    ]
+    if not reach_props:
+        return None
+    new_reach = frozenset(
+        Assignment.single_proposition(p, props).to_frozen() for p in reach_props
+    )
+    cleaned_avoid: list[FrozenAssignment] = []
+    for a in avoid:
+        true = a.get_true_propositions()
+        if true == frozenset({WALLS_PROP}):
+            continue
+        if WALLS_PROP in true:
+            for p in true:
+                if p != WALLS_PROP:
+                    cleaned_avoid.append(Assignment.single_proposition(p, props).to_frozen())
+        else:
+            cleaned_avoid.append(a)
+    if WALLS_PROP in props:
+        cleaned_avoid.append(Assignment.single_proposition(WALLS_PROP, props).to_frozen())
+    return new_reach, frozenset(cleaned_avoid)
+
+
+def strip_walls_from_reach_set(
+    reach: frozenset[FrozenAssignment],
+    avoid: frozenset[FrozenAssignment],
+    propositions,
+) -> tuple[frozenset[FrozenAssignment], frozenset[FrozenAssignment]] | None:
+    """Sanitize a frozenset of reach assignments (one Büchi stage)."""
+    props = set(propositions) if not isinstance(propositions, set) else propositions
+    reach_props: list[str] = []
+    for assignment in reach:
+        for name, truth in assignment:
+            if truth and name != WALLS_PROP and name not in reach_props:
+                reach_props.append(name)
+    if not reach_props:
+        return None
+    new_reach = frozenset(
+        Assignment.single_proposition(p, props).to_frozen() for p in reach_props
+    )
+    # Merge avoid via a dummy walls-free assignment pass.
+    dummy = Assignment.single_proposition(reach_props[0], props).to_frozen()
+    sanitized = sanitize_reach_avoid_walls(dummy, avoid, props)
+    if sanitized is None:
+        return None
+    _, new_avoid = sanitized
+    return new_reach, new_avoid
+
+
+def sanitize_ldba_sequence_walls(seq: LDBASequence, propositions) -> LDBASequence | None:
+    """Apply walls reach/avoid sanitization to every stage of a sequence."""
+    stages: list[tuple[frozenset[FrozenAssignment], frozenset[FrozenAssignment]]] = []
+    for reach, avoid in seq:
+        if reach == LDBASequence.EPSILON:
+            stages.append((reach, avoid))
+            continue
+        sanitized = strip_walls_from_reach_set(reach, avoid, propositions)
+        if sanitized is None:
+            return None
+        stages.append(sanitized)
+    if not stages:
+        return None
+    return LDBASequence(stages)
+
+
 @dataclass
 class Path:
     reach_avoid: list[tuple[LDBATransition, set[LDBATransition]]]
@@ -199,18 +280,25 @@ class ExhaustiveSearchSafety(SequenceSearch):
 
             for reach in reach_list:
                 true_props = reach.get_true_propositions()
-                # Check conflicts with avoid set
-                if not any(avoid_set <= true_props for avoid_set in avoid_sets):
-                    new_reach = frozenset(
-                        [Assignment.single_proposition(p[0], self.propositions).to_frozen()
-                        for p in reach if p[1]]
-                    )
-                    new_seq = [(new_reach, new_avoid)] + list(suffix)
-                    processed_seqs.append(LDBASequence(new_seq))
+                # Check conflicts with avoid set (ignore walls co-activation on reach)
+                true_wo_walls = true_props - {WALLS_PROP}
+                if not true_wo_walls:
+                    continue
+                if any(avoid_set <= true_wo_walls for avoid_set in avoid_sets):
+                    continue
+                sanitized = sanitize_reach_avoid_walls(reach, new_avoid, self.propositions)
+                if sanitized is None:
+                    continue
+                new_reach, walls_avoid = sanitized
+                # Keep suffix but strip walls from every later reach stage too.
+                head = LDBASequence([(new_reach, walls_avoid)] + list(suffix))
+                full = sanitize_ldba_sequence_walls(head, self.propositions)
+                if full is None:
+                    continue
+                processed_seqs.append(full)
 
         if not processed_seqs:
             raise NoPathsException()
-            # return None
 
         return max(processed_seqs, key=lambda s: self._score_subgoal([s[0]], obs))
 

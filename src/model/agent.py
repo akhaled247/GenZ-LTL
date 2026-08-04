@@ -6,6 +6,7 @@ from deploy.feature_recipe import resolve_feat_shape, sar_preprocess_for_deploy
 from envs.seq_wrapper import sar_task
 from model.model import Model
 from sequence.search import SequenceSearch
+from sequence.search.exhaustive_search import strip_walls_from_reach_set
 from ltl.automata import LDBASequence
 from ltl.logic import Assignment, FrozenAssignment
 
@@ -60,6 +61,9 @@ class Agent:
     def forward(self, obs, deterministic=False) -> np.ndarray:
         if self.sequence is not None:
             reach, avoid = self.sequence[0]
+            stripped = strip_walls_from_reach_set(reach, avoid, self.propositions)
+            if stripped is not None:
+                reach, avoid = stripped
             feat_shape = resolve_feat_shape(
                 self.model, sar_task(self.env).lidar_conf.num_bins,
             )
