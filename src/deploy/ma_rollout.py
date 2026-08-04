@@ -172,6 +172,7 @@ def _simulate_ma_sar_episodes(
                 if not render:
                     done_so_far = local_i + 1
                     pbar.set_postfix({
+                        's': seed,
                         "S": num_successes / done_so_far,
                         "V": num_violations / done_so_far,
                         "ADR": np.mean(rets),
