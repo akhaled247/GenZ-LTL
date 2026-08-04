@@ -107,6 +107,24 @@ class LDBAWrapper(gymnasium.Wrapper):
         else:
             return None
 
+    @staticmethod
+    def _wall_constraint_hit(info: dict[str, Any], props: set[str]) -> bool:
+        """True when WC / wall contact ended (or would end) the step."""
+        if "walls" in props:
+            return True
+        if float(info.get("cost", 0) or 0) > 0:
+            return True
+        if float(info.get("cost_ltl_walls", 0) or 0) > 0:
+            return True
+        for value in info.values():
+            if not isinstance(value, dict):
+                continue
+            if float(value.get("cost_walls", 0) or 0) > 0:
+                return True
+            if float(value.get("cost_ltl_walls", 0) or 0) > 0:
+                return True
+        return False
+
     def step(self, action: WrapperActType) -> tuple[WrapperObsType, SupportsFloat, bool, bool, dict[str, Any]]:
         obs, reward, terminated, truncated, info = super().step(action)
 
@@ -144,6 +162,11 @@ class LDBAWrapper(gymnasium.Wrapper):
             # Update the self.states such that the accepting one is the first
             if (i := accepting_indices[0]) != 0:
                 self.states[0], self.states[i] = self.states[i], self.states[0]
+        elif self._wall_constraint_hit(info, props) and not info.get('success'):
+            # WC / walls prop can terminate before Büchi reaches a violating sink
+            # on the same step — count as deploy violation (mirrors goal_met→success).
+            info['violation'] = True
+            terminated = True
         elif info.get('goal_met') and not info.get('violation'):
             # SAR mission complete can terminate before finite Büchi reaches an
             # accepting state on the same step — count as deploy success.

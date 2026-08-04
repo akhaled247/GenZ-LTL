@@ -60,6 +60,16 @@ def test_ma_episode_violation():
     assert not ma_episode_violation({"success": True}, agents)
 
 
+def test_ma_episode_violation_from_walls_cost():
+    agents = ["agent_0", "agent_1"]
+    assert ma_episode_violation({"agent_0": {"cost_walls": 1.0}}, agents)
+    assert ma_episode_violation({"cost": 1.0}, agents)
+    assert ma_episode_violation({"propositions": ["walls"]}, agents)
+    assert ma_episode_violation({"success": True}, agents, saw_walls=True)
+    assert ma_episode_violation({}, agents, saw_walls=True)
+    assert not ma_episode_violation({"agent_0": {"cost_walls": 0.0}}, agents)
+
+
 def test_ma_step_saw_walls():
     agents = ["agent_0", "agent_1"]
     assert not ma_step_saw_walls({}, agents)

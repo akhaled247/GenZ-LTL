@@ -127,7 +127,10 @@ def simulate_ma_sar(
                         env, info, step=num_steps, saw_walls=saw_walls,
                     )
                 success = ma_episode_success(info, agent_keys)
-                violation = ma_episode_violation(info, agent_keys)
+                violation = (
+                    not success
+                    and ma_episode_violation(info, agent_keys, saw_walls=saw_walls)
+                )
                 if success:
                     num_successes += 1
                     steps.append(num_steps)

@@ -77,14 +77,26 @@ def ma_episode_success(info: dict[str, Any], agents: list[str]) -> bool:
     return False
 
 
-def ma_episode_violation(info: dict[str, Any], agents: list[str]) -> bool:
+def ma_episode_violation(
+    info: dict[str, Any],
+    agents: list[str],
+    *,
+    saw_walls: bool | None = None,
+) -> bool:
+    """True if Büchi violation or WC wall hit (parity with SafePO saw_walls→V)."""
     if info.get("violation"):
         return True
     for agent in agents:
         ai = info.get(agent, {})
         if isinstance(ai, dict) and ai.get("violation"):
             return True
-    return False
+    if saw_walls:
+        return True
+    if "walls" in (info.get("propositions") or []):
+        return True
+    if float(info.get("cost", 0) or 0) > 0:
+        return True
+    return ma_step_saw_walls(info, agents)
 
 
 def ma_step_saw_walls(info: dict[str, Any], agents: list[str]) -> bool:
