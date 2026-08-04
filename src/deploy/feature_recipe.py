@@ -4,16 +4,32 @@ from __future__ import annotations
 from typing import Any
 
 from envs.seq_wrapper import sar_feat_dim
-from utils.deploy_meta import FEAT_RECIPE_SAR_V1, build_deploy_meta, load_deploy_meta, save_deploy_meta
+from utils.deploy_meta import (
+    FEAT_RECIPE_LEGACY_V0,
+    FEAT_RECIPE_SAR_V1,
+    FEAT_RECIPE_ZONE_COMPAT,
+    build_deploy_meta,
+    load_deploy_meta,
+    save_deploy_meta,
+)
 
-FEAT_RECIPE_LEGACY_V0 = "legacy_v0"
 
-
-def canonical_raw_dim(lidar_bins: int, *, include_walls_lidar: bool = False) -> int:
-    return sar_feat_dim(lidar_bins, include_walls_lidar=include_walls_lidar)
+def canonical_raw_dim(
+    lidar_bins: int,
+    *,
+    include_walls_lidar: bool = False,
+    zone_compat: bool = False,
+) -> int:
+    return sar_feat_dim(
+        lidar_bins,
+        include_walls_lidar=include_walls_lidar,
+        zone_compat=zone_compat,
+    )
 
 
 def infer_feat_recipe(raw_feature_dim: int, lidar_bins: int) -> str:
+    if int(raw_feature_dim) == canonical_raw_dim(lidar_bins, zone_compat=True):
+        return FEAT_RECIPE_ZONE_COMPAT
     canonical = {
         canonical_raw_dim(lidar_bins, include_walls_lidar=False),
         canonical_raw_dim(lidar_bins, include_walls_lidar=True),
@@ -30,7 +46,8 @@ def resolve_feat_shape(model: Any, lidar_bins: int) -> tuple[int, ...]:
     legacy = getattr(model, "input_feat_dim", None)
     if legacy is not None:
         return (int(legacy),)
-    return (canonical_raw_dim(lidar_bins),)
+    zone_compat = getattr(model, "feat_recipe", None) == FEAT_RECIPE_ZONE_COMPAT
+    return (canonical_raw_dim(lidar_bins, zone_compat=zone_compat),)
 
 
 def allow_legacy_padding(model: Any) -> bool:
@@ -43,6 +60,14 @@ def attach_model_deploy_fields(model: Any, deploy_meta: dict[str, Any]) -> None:
     model.feat_recipe = deploy_meta.get("feat_recipe", FEAT_RECIPE_SAR_V1)
     model.use_env_net_deploy = bool(deploy_meta.get("use_env_net", True))
     model.use_subgoal_one_hot = bool(deploy_meta.get("use_subgoal_one_hot", False))
+
+
+def apply_zone_compat_deploy_meta(deploy_meta: dict[str, Any], lidar_bins: int = 16) -> dict[str, Any]:
+    """Force zone_compat recipe fields for Zone→SAR eval (mutates a copy)."""
+    meta = dict(deploy_meta)
+    meta["feat_recipe"] = FEAT_RECIPE_ZONE_COMPAT
+    meta["raw_feature_dim"] = canonical_raw_dim(lidar_bins, zone_compat=True)
+    return meta
 
 
 def sar_preprocess_for_deploy(

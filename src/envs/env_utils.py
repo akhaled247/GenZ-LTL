@@ -79,6 +79,7 @@ def make_env_safety(
         sar_env_backend: str = "specrl",
         flat: bool = True,
         entr_bldg_obs: bool = False,
+        zone_compat: bool = False,
 ):
     from envs.pretraining.pretraining_env import PretrainingEnv
     from envs.seq_wrapper import SequenceSafetyWrapper
@@ -108,9 +109,11 @@ def make_env_safety(
     sample_task = sampler(propositions)
     if not sequence:
         env = LTLWrapper(env, sample_task)
-        env = LDBAWrapper(env, entr_bldg_obs=entr_bldg_obs)
+        env = LDBAWrapper(env, entr_bldg_obs=entr_bldg_obs, zone_compat=zone_compat)
     else:
-        env = SequenceSafetyWrapper(env, sample_task, entr_bldg_obs=entr_bldg_obs)
+        env = SequenceSafetyWrapper(
+            env, sample_task, entr_bldg_obs=entr_bldg_obs, zone_compat=zone_compat,
+        )
     env = TimeLimit(env, max_episode_steps=max_steps)
     env = RemoveTruncWrapper(env)
     return env

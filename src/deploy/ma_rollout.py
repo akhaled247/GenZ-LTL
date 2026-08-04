@@ -9,6 +9,7 @@ from tqdm import tqdm
 
 from deploy.coordinator import MultiAgentSARCoordinator
 from deploy.env_check import assert_sar_wc_paper_protocol
+from deploy.feature_recipe import apply_zone_compat_deploy_meta, attach_model_deploy_fields
 from deploy.loading import load_model_for_deploy
 from envs import make_env_safety
 from envs.env_utils import get_env_attr
@@ -46,6 +47,7 @@ def simulate_ma_sar(
     deterministic: bool = True,
     debug_done: bool = False,
     device: str = "cpu",
+    zone_compat: bool = False,
 ):
     check_rabinizer()
 
@@ -58,16 +60,20 @@ def simulate_ma_sar(
 
     model, deploy_meta, _store = load_model_for_deploy(train_env, exp, seed, formula, device=device)
 
-    if formula == MA_EVAL_FORMULA_DEFAULT:
-        formula = deploy_meta.get("ma_eval_formula", formula)
-    if eval_env == EVAL_ENV:
-        eval_env = deploy_meta.get("eval_env", eval_env)
+    if zone_compat:
+        deploy_meta = apply_zone_compat_deploy_meta(deploy_meta, lidar_bins=16)
+        attach_model_deploy_fields(model, deploy_meta)
+    else:
+        if formula == MA_EVAL_FORMULA_DEFAULT:
+            formula = deploy_meta.get("ma_eval_formula", formula)
+        if eval_env == EVAL_ENV:
+            eval_env = deploy_meta.get("eval_env", eval_env)
 
     warn_if_fragile_ma_formula(formula)
 
     if deploy_meta.get("feat_recipe") == FEAT_RECIPE_LEGACY_V0:
         print(
-            "WARNING: legacy_v0 feature recipe — prefer retraining with sar_v1 (48-dim) "
+            "WARNING: legacy_v0 feature recipe — prefer retraining with sar_v1 "
             "for paper-protocol deploy."
         )
 
@@ -79,7 +85,8 @@ def simulate_ma_sar(
         render_mode="human" if render else None,
         sar_env_backend="specrl",
         max_steps=2500,
-        entr_bldg_obs=bool(deploy_meta.get("entr_bldg_obs", False)),
+        entr_bldg_obs=bool(deploy_meta.get("entr_bldg_obs", False)) and not zone_compat,
+        zone_compat=zone_compat,
     )
     assert_sar_wc_paper_protocol(env)
 

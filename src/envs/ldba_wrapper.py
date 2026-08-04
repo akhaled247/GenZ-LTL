@@ -40,9 +40,10 @@ class LDBAWrapper(gymnasium.Wrapper):
     Wrapper that keeps track of LTL goal satisfaction using an LDBA, which is added to the observation space.
     """
 
-    def __init__(self, env: gymnasium.Env, entr_bldg_obs: bool = False):
+    def __init__(self, env: gymnasium.Env, entr_bldg_obs: bool = False, zone_compat: bool = False):
         super().__init__(env)
         self.entr_bldg_obs = bool(entr_bldg_obs)
+        self.zone_compat = bool(zone_compat)
         
         if "PointLtlSafety" in env.spec.id:
             self.observation_space = spaces.Dict({
@@ -62,6 +63,7 @@ class LDBAWrapper(gymnasium.Wrapper):
                 feat_dim = sar_feat_dim(
                     task.lidar_conf.num_bins,
                     include_walls_lidar=sar_has_walls_lidar(env),
+                    zone_compat=self.zone_compat,
                 )
                 self.observation_space = spaces.Dict({
                     'features': spaces.Box(-np.inf, np.inf, (feat_dim,), dtype=np.float32),
@@ -286,11 +288,13 @@ class LDBAWrapper(gymnasium.Wrapper):
                 sar_feat_dim(
                     sar_task(self.env).lidar_conf.num_bins,
                     include_walls_lidar=sar_has_walls_lidar(self.env, agent_idx),
+                    zone_compat=self.zone_compat,
                 ),
             )
         return pre_process_obs_sar(
             self.env, keys, reach, avoid, feat_shape,
             agent_idx=agent_idx, allow_legacy_padding=allow_legacy_padding,
             entr_bldg_obs=self.entr_bldg_obs,
+            zone_compat=self.zone_compat,
         )
 

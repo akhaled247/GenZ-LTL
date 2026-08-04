@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from config import model_configs
 from deploy.checkpoint_kind import detect_rl_algo, ppo_model_config_key
+from deploy.feature_recipe import apply_zone_compat_deploy_meta, attach_model_deploy_fields, ensure_deploy_meta
 from deploy.loading import load_model_for_deploy
 from deploy.ppo_loading import attach_ppo_sar_fields
 from envs import make_env, make_env_safety
@@ -24,6 +25,7 @@ def build_sar_ltl_eval_stack(
     flat: bool = True,
     render_mode: str | None = None,
     ma_deploy: bool = False,
+    zone_compat: bool = False,
 ):
     """Return (env, model, search, propositions, algo)."""
     eval_env = eval_env or train_env
@@ -59,22 +61,53 @@ def build_sar_ltl_eval_stack(
     else:
         config = model_configs[train_env]
         deploy_meta = load_deploy_meta(model_store.path)
+        if deploy_meta is None:
+            deploy_meta = ensure_deploy_meta(
+                model_store.path, training_status, train_env, lidar_bins=16,
+            )
+        if zone_compat:
+            deploy_meta = apply_zone_compat_deploy_meta(deploy_meta, lidar_bins=16)
+
+        entr_bldg = bool(deploy_meta.get("entr_bldg_obs", False)) and not zone_compat
         if ma_deploy:
-            model, _meta = load_model_for_deploy(train_env, exp, seed, formula)
+            model, loaded_meta, _ = load_model_for_deploy(train_env, exp, seed, formula)
+            if zone_compat:
+                deploy_meta = apply_zone_compat_deploy_meta(
+                    loaded_meta if loaded_meta else deploy_meta, lidar_bins=16,
+                )
+                attach_model_deploy_fields(model, deploy_meta)
             env = make_env_safety(
                 eval_env, sampler, flat=False, sequence=False,
                 render_mode=render_mode, max_steps=2500,
-                entr_bldg_obs=bool(deploy_meta.get("entr_bldg_obs", False)),
+                entr_bldg_obs=entr_bldg,
+                zone_compat=zone_compat,
             )
         else:
             env = make_env_safety(
                 eval_env, sampler, flat=flat, sequence=False,
                 render_mode=render_mode, max_steps=2500,
-                entr_bldg_obs=bool(deploy_meta.get("entr_bldg_obs", False)),
+                entr_bldg_obs=entr_bldg,
+                zone_compat=zone_compat,
             )
-            model = build_model_safety(
-                env, training_status, config, deploy_meta=deploy_meta,
-            )
+            # Build from train_env probe when Zone→SAR so obs space matches ckpt,
+            # then attach zone_compat fields for SAR feature recipe.
+            if zone_compat and eval_env != train_env:
+                probe = make_env_safety(
+                    train_env, sampler, flat=True, sequence=False, max_steps=2500,
+                )
+                try:
+                    model = build_model_safety(
+                        probe, training_status, config, deploy_meta=deploy_meta,
+                    )
+                    attach_model_deploy_fields(model, deploy_meta)
+                finally:
+                    probe.close()
+            else:
+                model = build_model_safety(
+                    env, training_status, config, deploy_meta=deploy_meta,
+                )
+                if zone_compat:
+                    attach_model_deploy_fields(model, deploy_meta)
         props = env.get_propositions()
         search = ExhaustiveSearchSafety(env, model, props, num_loops=2)
 

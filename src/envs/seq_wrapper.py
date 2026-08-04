@@ -21,7 +21,11 @@ def sar_feat_dim(
     agent_obs_dim: int = 16,
     *,
     include_walls_lidar: bool = False,
+    zone_compat: bool = False,
 ) -> int:
+    if zone_compat:
+        # Match PointLtlSafety*: agent | reach | avoid (no indep buildings/walls).
+        return agent_obs_dim + 2 * lidar_bins
     indep_lidar = 1 + int(include_walls_lidar)  # buildings (+ optional walls)
     return agent_obs_dim + (indep_lidar + 2) * lidar_bins  # reach + avoid
 
@@ -52,12 +56,18 @@ def lidar_keys_for_prop(
     available_keys: set[str] | frozenset[str] | None = None,
     *,
     for_reach: bool = False,
+    zone_compat: bool = False,
 ) -> list[str]:
     from specbench.envs.zones.sar_propositions import (
         is_entrapped_prop,
         resolve_casualty_lidar_keys,
         resolve_casualty_lidar_keys_for_observer,
     )
+    if zone_compat and is_entrapped_prop(prop):
+        building_key = buildings_lidar_key(agent_idx)
+        if available_keys is None or building_key in available_keys:
+            return [building_key]
+        return [building_key]
     if available_keys is not None:
         keys = resolve_casualty_lidar_keys_for_observer(
             prop, observer_idx=agent_idx, num_agents=num_agents, available_keys=available_keys,
@@ -106,6 +116,7 @@ def lidar_for_assignments(
     num_agents: int = 1,
     *,
     for_reach: bool = False,
+    zone_compat: bool = False,
 ) -> np.ndarray:
     keys = []
     obs_keys = set(original_obs.keys())
@@ -114,6 +125,7 @@ def lidar_for_assignments(
             keys.extend(lidar_keys_for_prop(
                 prop, agent_idx, num_agents, available_keys=obs_keys,
                 for_reach=for_reach,
+                zone_compat=zone_compat,
             ))
     if not keys:
         return np.zeros(lidar_dim, dtype=np.float64)
@@ -158,46 +170,54 @@ def pre_process_obs_sar(
         agent_idx: int = 0,
         allow_legacy_padding: bool = False,
         entr_bldg_obs: bool = False,
+        zone_compat: bool = False,
 ) -> np.ndarray:
     original_obs = sar_agent_obs(env, agent_idx)
     lidar_dim = sar_task(env).lidar_conf.num_bins
     num_agents = getattr(sar_task(env), "agent_num", 1)
     used_keys = set(agent_obs_keys)
-    used_keys.add(buildings_lidar_key(agent_idx))
     walls_key = walls_lidar_key(agent_idx)
     include_walls = walls_key in original_obs
-    if include_walls:
-        used_keys.add(walls_key)
+    if not zone_compat:
+        used_keys.add(buildings_lidar_key(agent_idx))
+        if include_walls:
+            used_keys.add(walls_key)
     obs_keys = set(original_obs.keys())
     for assignment in reach:
         for prop in assignment.to_string():
             used_keys.update(lidar_keys_for_prop(
                 prop, agent_idx, num_agents, available_keys=obs_keys,
                 for_reach=entr_bldg_obs,
+                zone_compat=zone_compat,
             ))
     for assignment in avoid:
         for prop in assignment.to_string():
             if prop:
                 used_keys.update(lidar_keys_for_prop(
                     prop, agent_idx, num_agents, available_keys=obs_keys,
+                    zone_compat=zone_compat,
                 ))
     agent_obs = np.concatenate([
         original_obs[k].flatten() if np.ndim(original_obs[k]) > 1 else original_obs[k]
         for k in agent_obs_keys
     ])
-    buildings_obs = original_obs[buildings_lidar_key(agent_idx)].flatten()
-    assert buildings_obs.shape == (lidar_dim,)
-    indep_parts = [agent_obs, buildings_obs]
-    if include_walls:
-        walls_obs = original_obs[walls_key].flatten()
-        assert walls_obs.shape == (lidar_dim,)
-        indep_parts.append(walls_obs)
+    indep_parts = [agent_obs]
+    if not zone_compat:
+        buildings_obs = original_obs[buildings_lidar_key(agent_idx)].flatten()
+        assert buildings_obs.shape == (lidar_dim,)
+        indep_parts.append(buildings_obs)
+        if include_walls:
+            walls_obs = original_obs[walls_key].flatten()
+            assert walls_obs.shape == (lidar_dim,)
+            indep_parts.append(walls_obs)
     reach_obs = lidar_for_assignments(
         original_obs, reach, lidar_dim, agent_idx=agent_idx, num_agents=num_agents,
         for_reach=entr_bldg_obs,
+        zone_compat=zone_compat,
     )
     avoid_obs = lidar_for_assignments(
         original_obs, avoid, lidar_dim, agent_idx=agent_idx, num_agents=num_agents,
+        zone_compat=zone_compat,
     )
     obs = np.concatenate([*indep_parts, reach_obs, avoid_obs]).astype(np.float32)
     target = int(feat_shape[0])
@@ -322,9 +342,11 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
         sample_sequence: Callable[[], LDBASequence],
         partial_reward=False,
         entr_bldg_obs: bool = False,
+        zone_compat: bool = False,
     ):
         super().__init__(env)
         self.entr_bldg_obs = bool(entr_bldg_obs)
+        self.zone_compat = bool(zone_compat)
         self.region_order = get_env_attr(env, 'get_propositions')()
         if "SAR" in env.spec.id:
             self.agent_obs_keys = SAR_AGENT_OBS_KEYS
@@ -332,6 +354,7 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
             feat_dim = sar_feat_dim(
                 lidar_bins,
                 include_walls_lidar=sar_has_walls_lidar(env),
+                zone_compat=self.zone_compat,
             )
             self.observation_space = spaces.Dict({
                 'features': spaces.Box(-np.inf, np.inf, (feat_dim,), dtype=np.float32),
@@ -399,6 +422,7 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
                 self.env, self.agent_obs_keys, reach, avoid,
                 self.observation_space['features'].shape,
                 entr_bldg_obs=self.entr_bldg_obs,
+                zone_compat=self.zone_compat,
             )
         if "PointLtlSafety" in self.env.spec.id:
             return self.pre_process_obs_zones(reach, avoid)

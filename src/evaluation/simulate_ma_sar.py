@@ -17,6 +17,12 @@ def main():
     parser.add_argument("--render", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--debug-done", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--deterministic", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--zone-compat",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="48-d Zone-like SAR features for PointLtlSafety* → SAR transfer eval.",
+    )
     args = parser.parse_args()
     gamma = 0.998
     simulate_ma_sar(
@@ -30,7 +36,8 @@ def main():
         args.render,
         args.deterministic,
         args.debug_done,
-        args.device
+        args.device,
+        zone_compat=args.zone_compat,
     )
 
 

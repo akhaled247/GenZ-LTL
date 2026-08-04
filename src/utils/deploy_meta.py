@@ -18,6 +18,7 @@ _FRAGILE_MA_UNTIL_MARKERS = (
 )
 FEAT_RECIPE_SAR_V1 = "sar_v1"
 FEAT_RECIPE_LEGACY_V0 = "legacy_v0"
+FEAT_RECIPE_ZONE_COMPAT = "zone_compat"
 
 
 def warn_if_fragile_ma_formula(formula: str) -> None:

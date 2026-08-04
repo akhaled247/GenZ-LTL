@@ -67,8 +67,15 @@ PYTHONPATH=src/ python src/evaluation/simulate.py --env PointLTL0MASAR1WC-v0 --e
 
 # Two-agent deploy eval (shared MASAR1WC checkpoint + coordinator on MASAR2WC)
 PYTHONPATH=src/ python src/evaluation/simulate_ma_sar.py --exp GenZ-SAR --seed 0 --formula "((!surface_0 & !surface_1) U all_entrapped) & (F surface_0 & F surface_1)"
+
+# Zone pretrained → SAR transfer (48-d zone_compat features; experimental)
+PYTHONPATH=src/ python src/evaluation/simulate_ma_sar.py \
+  --train_env PointLtlSafety2-v0 --eval_env PointLTL0MASAR2WC-v0 \
+  --exp GenZ-LTL --seed 1 --zone-compat \
+  --formula "(!walls U ((!surface_0 & !surface_1) U all_entrapped)) & (!walls U (F surface_0 & F surface_1))"
 ```
 
+Requires `experiments/rco/PointLtlSafety2-v0/GenZ-LTL/<seed>/status.pth`. `zone_compat` drops always-on buildings/walls lidars, maps entrapped reach/avoid lidar to buildings, and keeps walls only via the avoid channel when the formula includes `walls`.
 SafePO uses the same train→deploy split; see `RISE-Training/rise_training/cmdp/ma_protocol.md`.
 
 Multi-agent **MARL** baselines (e.g. SafePO IPPO on `PointLTL0MASAR2-v0`) are optional comparisons in `RISE-Training`, not the paper protocol.

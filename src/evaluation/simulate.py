@@ -12,6 +12,7 @@ from config import model_configs
 from deploy.eval_stack import build_sar_ltl_eval_stack
 from sequence.search import ExhaustiveSearch, ExhaustiveSearchSafety, NoPathsException
 from utils.model_store import ModelStore
+from utils.deploy_meta import MA_EVAL_FORMULA_DEFAULT
 import argparse
 
 from model.agent import Agent
@@ -20,6 +21,10 @@ from model.agent import Agent
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--env', type=str, default='PointLtl2-v0')
+    parser.add_argument('--train-env', type=str, default=None,
+                        help='Checkpoint env (defaults to --env / --eval-env).')
+    parser.add_argument('--eval-env', type=str, default=None,
+                        help='Rollout env (defaults to --env).')
     parser.add_argument('--exp', type=str, default='deepset')
     parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--num_episodes', type=int, default=100)
@@ -27,28 +32,49 @@ def main():
     parser.add_argument('--finite', action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument('--render', action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument('--deterministic', action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        '--zone-compat',
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help='48-d Zone-like SAR features for PointLtlSafety* → SAR transfer eval.',
+    )
     args = parser.parse_args()
-    gamma = 0.94 if args.env == 'LetterEnv-v0' else 0.998 if args.env in ('PointLtl2-v0', 'PointLtlSafety2-v0') else 0.98
+    eval_env = args.eval_env or args.env
+    train_env = args.train_env or eval_env
+    formula = args.formula
+    if args.zone_compat and 'MASAR' in eval_env and formula == '(F blue) & (!blue U (green & F yellow))':
+        formula = MA_EVAL_FORMULA_DEFAULT
+    gamma = 0.94 if eval_env == 'LetterEnv-v0' else 0.998 if eval_env in (
+        'PointLtl2-v0', 'PointLtlSafety2-v0',
+    ) or 'MASAR' in eval_env else 0.98
     return simulate(
-        args.env, gamma, args.exp, args.seed, args.num_episodes,
-        args.formula, args.finite, args.render, args.deterministic,
+        eval_env, gamma, args.exp, args.seed, args.num_episodes,
+        formula, args.finite, args.render, args.deterministic,
+        train_env=train_env, zone_compat=args.zone_compat,
     )
 
 
-def simulate(env, gamma, exp, seed, num_episodes, formula, finite, render, deterministic=True):
+def simulate(
+    env, gamma, exp, seed, num_episodes, formula, finite, render, deterministic=True,
+    *,
+    train_env: str | None = None,
+    zone_compat: bool = False,
+):
     env_name = env
+    train_env = train_env or env_name
     random.seed(seed)
     np.random.seed(seed)
     torch.random.manual_seed(seed)
 
     sampler = FixedSampler.partial(formula)
-    max_steps = None
-    use_safety = is_safety_model_env(env_name)
+    use_safety = is_safety_model_env(train_env) or is_safety_model_env(env_name)
     if use_safety:
         env, model, search, props, _algo = build_sar_ltl_eval_stack(
-            env_name, exp, seed, formula,
+            train_env, exp, seed, formula,
+            eval_env=env_name,
             flat=True,
             render_mode='human' if render else None,
+            zone_compat=zone_compat,
         )
     else:
         env = make_env(env_name, sampler, render_mode='human' if render else None)

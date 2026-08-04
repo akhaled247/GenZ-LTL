@@ -87,7 +87,8 @@ def test_pre_process_obs_sar_entrapped_reach_respects_flag():
     lidar_dim = 4
     env, task = _mock_sar_env(lidar_dim)
     keys = sar_agent_obs_keys(0)
-    agent_obs = {k: np.zeros(3, dtype=np.float32) for k in keys}
+    dims = [3, 3, 3, 3, 4]
+    agent_obs = {k: np.zeros(d, dtype=np.float32) for k, d in zip(keys, dims)}
     building = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
     entrapped = np.array([0.0, 0.6, 0.0, 0.0], dtype=np.float32)
     agent_obs["terracotta_buildings_lidar_0"] = building
@@ -115,7 +116,8 @@ def test_pre_process_obs_sar_includes_walls_lidar_when_present():
     lidar_dim = 4
     env, task = _mock_sar_env(lidar_dim)
     keys = sar_agent_obs_keys(0)
-    agent_obs = {k: np.zeros(3, dtype=np.float32) for k in keys}
+    dims = [3, 3, 3, 3, 4]
+    agent_obs = {k: np.zeros(d, dtype=np.float32) for k, d in zip(keys, dims)}
     building = np.array([0.1, 0.0, 0.0, 0.0], dtype=np.float32)
     walls = np.array([0.0, 0.7, 0.0, 0.0], dtype=np.float32)
     entrapped = np.array([0.0, 0.0, 0.8, 0.0], dtype=np.float32)
@@ -131,7 +133,7 @@ def test_pre_process_obs_sar_includes_walls_lidar_when_present():
         mp.setattr("envs.seq_wrapper.sar_task", lambda _env: task)
         feat = pre_process_obs_sar(env, keys, reach, frozenset(), (feat_dim,))
 
-    agent_len = sum(np.ravel(agent_obs[k]).size for k in keys)
+    agent_len = 16
     walls_slice = feat[agent_len + lidar_dim: agent_len + 2 * lidar_dim]
     reach_slice = feat[agent_len + 2 * lidar_dim: agent_len + 3 * lidar_dim]
     assert feat.shape == (feat_dim,)
