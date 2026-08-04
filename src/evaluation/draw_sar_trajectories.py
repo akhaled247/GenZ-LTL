@@ -155,12 +155,12 @@ def _agent_mat_xy(task, agent_idx: int = 0) -> np.ndarray:
     return mat[:2, :2]
 
 
-def _lidar_peak_world_dir(reach_lidar: np.ndarray, agent_mat_xy: np.ndarray) -> tuple[np.ndarray, float, int]:
-    """Peak reach-lidar bin → unit world direction + strength + bin index."""
-    lidar = np.asarray(reach_lidar, dtype=float).reshape(-1)
-    peak_bin = int(np.argmax(lidar))
-    strength = float(lidar[peak_bin])
-    n = max(1, lidar.size)
+def _lidar_peak_world_dir(lidar: np.ndarray, agent_mat_xy: np.ndarray) -> tuple[np.ndarray, float, int]:
+    """Peak lidar bin → unit world direction + strength + bin index."""
+    arr = np.asarray(lidar, dtype=float).reshape(-1)
+    peak_bin = int(np.argmax(arr))
+    strength = float(arr[peak_bin])
+    n = max(1, arr.size)
     ego_theta = (peak_bin / n) * (2.0 * math.pi)
     ego = np.array([math.cos(ego_theta), math.sin(ego_theta)], dtype=float)
     world = agent_mat_xy @ ego
@@ -179,6 +179,44 @@ def _bearing_delta_deg(peak_dir: np.ndarray, goal_dir: np.ndarray) -> float | No
     return math.degrees(math.acos(cos_a))
 
 
+def _entrapped_masked(task, agent_idx: int, original_obs: dict) -> bool:
+    """True when SpecRL wrapper zeros entrapped lidar (outside / not entered)."""
+    key = f"entrapped_casualtys_lidar_{agent_idx}"
+    if key not in original_obs:
+        return False
+    if float(np.max(original_obs[key])) > 1e-8:
+        return False
+    try:
+        from safety_gymnasium.tasks.safe_multi_agent.utils.sar_utils import (
+            agent_inside_building_idx,
+        )
+        inside = agent_inside_building_idx(task, agent_idx) is not None
+    except Exception:  # noqa: BLE001
+        inside = False
+    entered = bool(getattr(task, "_buildings_entered", set()))
+    return not (inside or entered)
+
+
+def _print_zone_sar_diff_map(*, train_env: str, eval_env: str, zone_compat: bool) -> None:
+    if "PointLtlSafety" not in train_env or "MASAR" not in eval_env:
+        return
+    print(
+        "=== Zone→SAR feature / semantics map ===\n"
+        "  Zone train (PointLtlSafety*): features = agent(16) | reach_color | avoid_color\n"
+        "    reach/avoid = spatially separate colored zones; avoid≠goal direction.\n"
+        f"  SAR eval ({eval_env}) zone_compat={zone_compat}:\n"
+        "    packing = agent(16) | reach | avoid  (no indep buildings/walls slices)\n"
+        "    entrapped reach → terracotta_buildings_lidar (zone_compat remaps)\n"
+        "    avoid often = {surface_*, walls} after sanitize_reach_avoid_walls\n"
+        "    walls_lidar peaks at building/arena walls — SAME bearing as entrapped goal.\n"
+        "  Zone policy learned: approach reach, flee avoid. If avoid≈goal bearing → flees goal.\n"
+        "  Native zones 100% OK does NOT imply Zone→SAR OK (avoid semantics change).\n"
+        "  SAR-native (sar_v1): buildings/walls are indep channels; reach entrapped is\n"
+        "    MASKED to 0 until agent enters a building (SafetyGymWrapperMASAR).\n"
+        "========================================"
+    )
+
+
 def _diagnose_reach_avoid(
     *,
     env,
@@ -188,7 +226,7 @@ def _diagnose_reach_avoid(
     zone_compat: bool = False,
     entr_bldg_obs: bool = False,
 ) -> dict:
-    """Snapshot first-stage reach/avoid + lidar peak vs true casualty bearing."""
+    """Snapshot first-stage reach/avoid + lidar peaks vs true casualty bearing."""
     task = sar_task(env)
     active = _active_reach_avoid(seq, propositions)
     out: dict = {
@@ -200,9 +238,18 @@ def _diagnose_reach_avoid(
         "origin": None,
         "peak_dir": None,
         "goal_dir": None,
+        "avoid_dir": None,
+        "buildings_dir": None,
         "peak_strength": 0.0,
+        "avoid_strength": 0.0,
+        "buildings_strength": 0.0,
         "peak_bin": -1,
         "delta_deg": None,
+        "avoid_delta_deg": None,
+        "buildings_delta_deg": None,
+        "entrapped_masked": False,
+        "avoid_goal_conflict": False,
+        "warn": False,
         "ok": False,
         "note": "",
     }
@@ -228,19 +275,36 @@ def _diagnose_reach_avoid(
     lidar_dim = int(task.lidar_conf.num_bins)
     original_obs = sar_agent_obs(env, agent_idx)
     num_agents = int(getattr(task, "agent_num", 1) or 1)
+    mat_xy = _agent_mat_xy(task, agent_idx)
+    masked = _entrapped_masked(task, agent_idx, original_obs)
+    out["entrapped_masked"] = masked
+
     reach_lidar = lidar_for_assignments(
         original_obs, reach, lidar_dim, agent_idx=agent_idx, num_agents=num_agents,
         for_reach=entr_bldg_obs,
         zone_compat=zone_compat,
     )
-    mat_xy = _agent_mat_xy(task, agent_idx)
+    avoid_lidar = lidar_for_assignments(
+        original_obs, avoid, lidar_dim, agent_idx=agent_idx, num_agents=num_agents,
+        zone_compat=zone_compat,
+    )
     peak_dir, strength, peak_bin = _lidar_peak_world_dir(reach_lidar, mat_xy)
+    avoid_dir, avoid_strength, _ = _lidar_peak_world_dir(avoid_lidar, mat_xy)
     out["peak_dir"] = peak_dir
     out["peak_strength"] = strength
     out["peak_bin"] = peak_bin
+    out["avoid_dir"] = avoid_dir
+    out["avoid_strength"] = avoid_strength
+
+    bldg_key = f"terracotta_buildings_lidar_{agent_idx}"
+    if bldg_key in original_obs:
+        bldg_dir, bldg_strength, _ = _lidar_peak_world_dir(original_obs[bldg_key], mat_xy)
+        out["buildings_dir"] = bldg_dir
+        out["buildings_strength"] = bldg_strength
 
     if goal_xy is None:
         out["note"] = f"no geom for reach props {props}"
+        out["warn"] = True
         return out
 
     goal_vec = goal_xy - origin
@@ -252,35 +316,158 @@ def _diagnose_reach_avoid(
     out["goal_dir"] = goal_dir
     delta = _bearing_delta_deg(peak_dir, goal_dir)
     out["delta_deg"] = delta
-    if strength < 1e-6:
-        out["note"] = "reach lidar all-zero (goal maybe occluded / wrong keys)"
-    elif delta is not None and delta > 90.0:
-        out["note"] = f"reach lidar peak OPPOSITE goal (Δ={delta:.0f}°)"
-    elif delta is not None:
-        out["note"] = f"reach lidar ≈ goal (Δ={delta:.0f}°)"
+    out["avoid_delta_deg"] = _bearing_delta_deg(avoid_dir, goal_dir)
+    if out["buildings_dir"] is not None:
+        out["buildings_delta_deg"] = _bearing_delta_deg(out["buildings_dir"], goal_dir)
+
+    notes: list[str] = []
+    # Expected SAR partial-obs mask (not a bug by itself).
+    if masked and any(p.startswith("entrapped_") for p in out["reach_props"]):
+        bdd = out["buildings_delta_deg"]
+        bds = out["buildings_strength"]
+        notes.append(
+            f"entrapped lidar MASKED outside building (expected); "
+            f"buildings peak strength={bds:.3f}"
+            + (f" Δ={bdd:.0f}°" if bdd is not None else "")
+        )
+        if bds > 1e-6 and bdd is not None and bdd < 45.0:
+            out["ok"] = True
+        elif not zone_compat:
+            # sar_v1 still has indep buildings channel — reach=0 is fine.
+            out["ok"] = True
+
+    if strength < 1e-6 and not masked:
+        notes.append("reach lidar all-zero (unexpected — check keys / zone_compat)")
+        out["warn"] = True
+    elif strength < 1e-6 and zone_compat:
+        notes.append("zone_compat reach all-zero (buildings key missing?)")
+        out["warn"] = True
+    elif delta is not None and delta > 90.0 and strength > 1e-6:
+        notes.append(f"reach lidar peak OPPOSITE goal (Δ={delta:.0f}°)")
+        out["warn"] = True
+    elif delta is not None and strength > 1e-6:
+        notes.append(f"reach lidar ≈ goal (Δ={delta:.0f}°)")
         out["ok"] = True
+
+    # Zone→SAR smoking gun: walls/surface avoid co-aligned with reach goal.
+    ad = out["avoid_delta_deg"]
+    if (
+        avoid_strength > 0.05
+        and ad is not None
+        and ad < 45.0
+        and "walls" in out["avoid_props"]
+    ):
+        out["avoid_goal_conflict"] = True
+        out["warn"] = True
+        notes.append(
+            f"AVOID≈GOAL conflict (avoid Δ={ad:.0f}° strength={avoid_strength:.3f}; "
+            f"walls in avoid — zone policy flees this)"
+        )
+    elif avoid_strength > 1e-6 and ad is not None:
+        notes.append(f"avoid peak Δ={ad:.0f}° strength={avoid_strength:.3f}")
+
+    out["note"] = "; ".join(notes) if notes else ""
     return out
 
 
 def _episode_title(outcome: str, diag: dict) -> str:
     stage = diag.get("stage0") or "?"
     delta = diag.get("delta_deg")
-    delta_s = f" Δ{delta:.0f}°" if delta is not None else ""
+    delta_s = f" RΔ{delta:.0f}°" if delta is not None and diag.get("peak_strength", 0) > 1e-6 else ""
+    if diag.get("entrapped_masked") and diag.get("buildings_delta_deg") is not None:
+        delta_s = f" BΔ{diag['buildings_delta_deg']:.0f}°"
+    go = diag.get("motion_delta_deg")
+    go_s = f" goΔ{go:.0f}°" if go is not None else ""
     flag = ""
-    note = diag.get("note") or ""
-    if "OPPOSITE" in note or "all-zero" in note:
+    if diag.get("motion_opposite"):
+        flag = " GO≠GOAL"
+    elif diag.get("avoid_goal_conflict"):
+        flag = " AVOID≈GOAL"
+    elif diag.get("warn"):
         flag = " ⚠"
-    return f"{outcome} | {stage}{delta_s}{flag}"
+    elif diag.get("entrapped_masked"):
+        flag = " masked"
+    return f"{outcome} | {stage}{delta_s}{go_s}{flag}"
 
 
 def _print_diag(ep: int, formula: str, diag: dict, outcome: str) -> None:
+    go = diag.get("motion_delta_deg")
+    go_s = f"goΔ={go:.0f}°" if go is not None else "goΔ=n/a"
     print(
         f"[ep {ep}] {outcome} | formula={formula}\n"
         f"  sequence: {diag.get('sequence')}\n"
         f"  feature stage0: {diag.get('stage0')} | "
-        f"peak_bin={diag.get('peak_bin')} strength={diag.get('peak_strength'):.3f} | "
-        f"{diag.get('note')}"
+        f"reach_bin={diag.get('peak_bin')} reach_s={diag.get('peak_strength'):.3f} "
+        f"avoid_s={diag.get('avoid_strength'):.3f} "
+        f"bldg_s={diag.get('buildings_strength'):.3f} | {go_s}\n"
+        f"  {diag.get('note')}"
     )
+
+
+def _enrich_diag_with_motion(diag: dict, paths: dict[str, list[np.ndarray]], *, agent_key: str = "agent_0") -> dict:
+    """Attach early-path travel direction vs goal (after rollout has points)."""
+    pts = paths.get(agent_key) or []
+    goal_xy = diag.get("goal_xy")
+    origin = diag.get("origin")
+    diag["motion_dir"] = None
+    diag["motion_delta_deg"] = None
+    diag["motion_opposite"] = False
+    if origin is None:
+        origin = np.asarray(pts[0], dtype=float)[:2] if pts else None
+        diag["origin"] = origin
+    if origin is None or goal_xy is None or len(pts) < 2:
+        return diag
+
+    origin = np.asarray(origin, dtype=float)[:2]
+    goal_xy = np.asarray(goal_xy, dtype=float)[:2]
+    goal_vec = goal_xy - origin
+    gn = float(np.linalg.norm(goal_vec))
+    if gn < 1e-8:
+        return diag
+    goal_dir = goal_vec / gn
+    diag["goal_dir"] = goal_dir
+
+    # Use first segment that moves enough; else mean of early steps.
+    motion = np.zeros(2, dtype=float)
+    for i in range(1, len(pts)):
+        step = np.asarray(pts[i], dtype=float)[:2] - np.asarray(pts[i - 1], dtype=float)[:2]
+        if float(np.linalg.norm(step)) > 0.02:
+            # Average first ~0.5–1.0 units of travel for stable heading.
+            traveled = 0.0
+            acc = np.zeros(2, dtype=float)
+            for j in range(i, len(pts)):
+                d = np.asarray(pts[j], dtype=float)[:2] - np.asarray(pts[j - 1], dtype=float)[:2]
+                acc += d
+                traveled += float(np.linalg.norm(d))
+                if traveled >= 0.6:
+                    break
+            motion = acc
+            break
+    if float(np.linalg.norm(motion)) < 1e-8:
+        # Fallback: net displacement start→end (coarse).
+        motion = np.asarray(pts[-1], dtype=float)[:2] - origin
+    mn = float(np.linalg.norm(motion))
+    if mn < 1e-8:
+        note = diag.get("note") or ""
+        diag["note"] = (note + "; ").lstrip("; ") + "agent barely moved"
+        return diag
+
+    motion_dir = motion / mn
+    diag["motion_dir"] = motion_dir
+    md = _bearing_delta_deg(motion_dir, goal_dir)
+    diag["motion_delta_deg"] = md
+    if md is not None and md > 90.0:
+        diag["motion_opposite"] = True
+        diag["warn"] = True
+        note = diag.get("note") or ""
+        diag["note"] = (
+            (note + "; " if note else "")
+            + f"agent went OPPOSITE goal (goΔ={md:.0f}°)"
+        )
+    elif md is not None:
+        note = diag.get("note") or ""
+        diag["note"] = (note + "; " if note else "") + f"agent vs goal goΔ={md:.0f}°"
+    return diag
 
 
 def _collect_agent_xy(task, num_agents: int) -> dict[str, np.ndarray]:
@@ -307,10 +494,17 @@ def _grid_shape(n: int) -> tuple[int, int]:
 def _overlay_from_diag(diag: dict) -> dict | None:
     if diag.get("origin") is None:
         return None
+    peak = diag.get("peak_dir")
+    # When entrapped masked, show buildings peak as the effective approach cue.
+    if diag.get("entrapped_masked") and diag.get("buildings_strength", 0) > 1e-6:
+        peak = diag.get("buildings_dir")
     return {
         "origin": diag["origin"],
-        "peak_dir": diag.get("peak_dir"),
+        "goal_xy": diag.get("goal_xy"),
+        "peak_dir": peak if diag.get("peak_strength", 0) > 1e-6 or diag.get("entrapped_masked") else None,
         "goal_dir": diag.get("goal_dir"),
+        "avoid_dir": diag.get("avoid_dir") if diag.get("avoid_strength", 0) > 1e-6 else None,
+        "motion_dir": diag.get("motion_dir"),
         "arrow_scale": 1.4,
     }
 
@@ -346,6 +540,10 @@ def _rollout_sa(
         getattr(model, "feat_recipe", None) == FEAT_RECIPE_ZONE_COMPAT or zone_compat
     )
     entr_bldg_obs = bool(getattr(model, "entr_bldg_obs", False)) and not zone_compat_eff
+    if debug_reach_avoid:
+        _print_zone_sar_diff_map(
+            train_env=train_env, eval_env=eval_env, zone_compat=zone_compat_eff,
+        )
 
     scenes, paths_list, titles, overlays = [], [], [], []
     success = violation = unreachable = 0
@@ -365,7 +563,11 @@ def _rollout_sa(
             "delta_deg": None,
             "peak_bin": -1,
             "peak_strength": 0.0,
+            "avoid_strength": 0.0,
+            "buildings_strength": 0.0,
             "origin": None,
+            "warn": False,
+            "entrapped_masked": False,
         }
         done = False
         first = True
@@ -388,6 +590,7 @@ def _rollout_sa(
                 done = True
         paths_list.append(paths)
         outcome = _episode_outcome(info)
+        diag = _enrich_diag_with_motion(diag, paths)
         titles.append(_episode_title(outcome, diag))
         overlays.append(_overlay_from_diag(diag))
         if debug_reach_avoid:
@@ -401,8 +604,9 @@ def _rollout_sa(
     env.close()
     print(f"Formula: {formula}, Success: {success}, Violation: {violation}, Unreachable: {unreachable}")
     print(
-        "Note: walls already forced into avoid by sanitize_reach_avoid_walls — "
-        "wrapping formula with (!walls U ...) usually no-ops on feature reach/avoid."
+        "Note: walls forced into avoid by sanitize — (!walls U ...) usually no-ops. "
+        "SAR entrapped reach lidar is masked until enter building (use buildings channel / "
+        "zone_compat remap). Zone→SAR: watch for AVOID≈GOAL (walls avoid vs building reach)."
     )
     if "PointLtlSafety" in train_env and "MASAR" in eval_env and not zone_compat_eff:
         print(
@@ -457,6 +661,10 @@ def _rollout_ma(
     coordinator = MultiAgentSARCoordinator(
         env, model, search, props, num_agents, verbose=debug_reach_avoid, device=device,
     )
+    if debug_reach_avoid:
+        _print_zone_sar_diff_map(
+            train_env=train_env, eval_env=eval_env, zone_compat=zone_compat,
+        )
 
     scenes, paths_list, titles, overlays = [], [], [], []
     success = violation = unreachable = 0
@@ -475,7 +683,11 @@ def _rollout_ma(
             "delta_deg": None,
             "peak_bin": -1,
             "peak_strength": 0.0,
+            "avoid_strength": 0.0,
+            "buildings_strength": 0.0,
             "origin": None,
+            "warn": False,
+            "entrapped_masked": False,
         }
         done = False
         first = True
@@ -495,6 +707,7 @@ def _rollout_ma(
                 done = True
         paths_list.append(paths)
         outcome = _episode_outcome(info)
+        diag = _enrich_diag_with_motion(diag, paths)
         titles.append(_episode_title(outcome, diag))
         overlays.append(_overlay_from_diag(diag))
         if debug_reach_avoid:
@@ -508,8 +721,9 @@ def _rollout_ma(
     env.close()
     print(f"Formula: {formula}, Success: {success}, Violation: {violation}, Unreachable: {unreachable}")
     print(
-        "Note: walls already forced into avoid by sanitize_reach_avoid_walls — "
-        "wrapping formula with (!walls U ...) usually no-ops on feature reach/avoid."
+        "Note: walls forced into avoid by sanitize — (!walls U ...) usually no-ops. "
+        "SAR entrapped reach lidar is masked until enter building. "
+        "Zone→SAR: watch for AVOID≈GOAL (walls avoid vs building reach)."
     )
     return scenes, paths_list, titles, overlays
 

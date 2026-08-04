@@ -353,51 +353,65 @@ def draw_reach_avoid_overlay(
     *,
     add_legend_proxies: bool = True,
 ) -> None:
-    """Draw first-step reach peak (solid) + true goal bearing (dashed)."""
+    """Draw motion vs goal + reach/avoid peaks at episode start."""
     if not overlay:
         return
     origin = overlay.get("origin")
     peak_dir = overlay.get("peak_dir")
     goal_dir = overlay.get("goal_dir")
+    avoid_dir = overlay.get("avoid_dir")
+    motion_dir = overlay.get("motion_dir")
+    goal_xy = overlay.get("goal_xy")
     if origin is None:
         return
     o = np.asarray(origin, dtype=float)[:2]
     scale = float(overlay.get("arrow_scale", 1.2))
+
+    # Thin line start → goal (where agent *should* go).
+    if goal_xy is not None:
+        g = np.asarray(goal_xy, dtype=float)[:2]
+        ax.plot(
+            [o[0], g[0]], [o[1], g[1]],
+            color="#2e7d32", lw=1.0, linestyle=":", alpha=0.55, zorder=11,
+        )
+        ax.plot(g[0], g[1], marker="x", color="#2e7d32", markersize=8, zorder=12)
+
+    def _arrow(direction, color, linestyle="-", lw=2.0, scale_mul=1.0):
+        d = np.asarray(direction, dtype=float)[:2]
+        n = float(np.linalg.norm(d))
+        if n < 1e-8:
+            return
+        d = d / n
+        tip = o + scale * scale_mul * d
+        ax.plot(
+            [o[0], tip[0]], [o[1], tip[1]],
+            color=color, lw=lw, linestyle=linestyle, zorder=12,
+        )
+        ax.annotate(
+            "",
+            xy=tip,
+            xytext=o + 0.85 * scale * scale_mul * d,
+            arrowprops=dict(arrowstyle="->", color=color, lw=lw),
+            zorder=13,
+        )
+
+    # Agent early travel (what it actually did) — thickest, easiest to spot.
+    if motion_dir is not None:
+        _arrow(motion_dir, "#1565c0", lw=2.8, scale_mul=1.15)
+        if add_legend_proxies:
+            ax.plot([], [], color="#1565c0", lw=2.8, label="agent went")
     if peak_dir is not None:
-        d = np.asarray(peak_dir, dtype=float)[:2]
-        n = float(np.linalg.norm(d))
-        if n > 1e-8:
-            d = d / n
-            tip = o + scale * d
-            ax.plot([o[0], tip[0]], [o[1], tip[1]], color="#c2185b", lw=2.0, zorder=12)
-            ax.annotate(
-                "",
-                xy=tip,
-                xytext=o + 0.85 * scale * d,
-                arrowprops=dict(arrowstyle="->", color="#c2185b", lw=2.0),
-                zorder=13,
-            )
-            if add_legend_proxies:
-                ax.plot([], [], color="#c2185b", lw=2.0, label="reach lidar peak")
+        _arrow(peak_dir, "#c2185b")
+        if add_legend_proxies:
+            ax.plot([], [], color="#c2185b", lw=2.0, label="reach/bldg peak")
+    if avoid_dir is not None:
+        _arrow(avoid_dir, "#ef6c00", linestyle=":")
+        if add_legend_proxies:
+            ax.plot([], [], color="#ef6c00", lw=2.0, linestyle=":", label="avoid peak")
     if goal_dir is not None:
-        d = np.asarray(goal_dir, dtype=float)[:2]
-        n = float(np.linalg.norm(d))
-        if n > 1e-8:
-            d = d / n
-            tip = o + scale * d
-            ax.plot(
-                [o[0], tip[0]], [o[1], tip[1]],
-                color="#2e7d32", lw=2.0, linestyle="--", zorder=12,
-            )
-            ax.annotate(
-                "",
-                xy=tip,
-                xytext=o + 0.85 * scale * d,
-                arrowprops=dict(arrowstyle="->", color="#2e7d32", lw=2.0),
-                zorder=13,
-            )
-            if add_legend_proxies:
-                ax.plot([], [], color="#2e7d32", lw=2.0, linestyle="--", label="true reach goal")
+        _arrow(goal_dir, "#2e7d32", linestyle="--")
+        if add_legend_proxies:
+            ax.plot([], [], color="#2e7d32", lw=2.0, linestyle="--", label="true reach goal")
 
 
 def draw_sar_trajectories(
@@ -436,7 +450,9 @@ def draw_sar_trajectories(
                 color = _AGENT_COLORS[j % len(_AGENT_COLORS)]
                 ax.plot([], [], color=color, linewidth=2.5, label=key)
             if overlays is not None and overlays[i]:
-                ax.plot([], [], color="#c2185b", lw=2.0, label="reach lidar peak")
+                ax.plot([], [], color="#1565c0", lw=2.8, label="agent went")
+                ax.plot([], [], color="#c2185b", lw=2.0, label="reach/bldg peak")
+                ax.plot([], [], color="#ef6c00", lw=2.0, linestyle=":", label="avoid peak")
                 ax.plot([], [], color="#2e7d32", lw=2.0, linestyle="--", label="true reach goal")
             ax.legend(loc="upper right", fontsize=7, framealpha=0.7)
     plt.tight_layout(pad=2.5)
