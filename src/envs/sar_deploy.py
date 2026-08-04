@@ -139,6 +139,135 @@ def _fmt_lidar(arr: np.ndarray) -> str:
     return f"max={a.max():.3f} {np.array2string(a, precision=3, suppress_small=True)}"
 
 
+def classify_wall_geom_name(name: str) -> str:
+    """Bucket a MuJoCo geom name that participates in wall-cost matching."""
+    n = str(name)
+    if "building" in n and "wall" in n:
+        return "building_perimeter"
+    if n.startswith("ltl_wall") or "ltl_wall" in n:
+        return "arena_ltl"
+    if n.startswith("wall") and "ltl" not in n:
+        return "interior"
+    if "wall" in n:
+        return "other_wall"
+    return "non_wall"
+
+
+def expected_pseudo_lidar(dist: float, exp_gain: float = 0.5) -> float:
+    """Match ``_accumulate_pseudo_lidar_reading`` with ``max_dist=None``."""
+    return float(np.exp(-float(exp_gain) * float(dist)))
+
+
+def collect_gremlin_wall_contacts(task: Any) -> list[dict[str, Any]]:
+    """Live MuJoCo contacts: gremlin*obj ↔ geom with ``wall`` in the name."""
+    model = getattr(task, "model", None)
+    data = getattr(task, "data", None)
+    if model is None or data is None:
+        engine = getattr(task, "engine", None)
+        if engine is not None:
+            model = getattr(engine, "model", model)
+            data = getattr(engine, "data", data)
+    if model is None or data is None:
+        return []
+    out: list[dict[str, Any]] = []
+    ncon = int(getattr(data, "ncon", 0))
+    for con in data.contact[:ncon]:
+        name1 = model.geom(con.geom1).name
+        name2 = model.geom(con.geom2).name
+        pair = (name1, name2)
+        if not any("gremlin" in n for n in pair):
+            continue
+        if not any("wall" in n for n in pair):
+            continue
+        gremlin_name = name1 if "gremlin" in name1 else name2
+        wall_name = name2 if "gremlin" in name1 else name1
+        agent_id = None
+        # Names look like gremlin0obj
+        digits = "".join(ch for ch in gremlin_name if ch.isdigit())
+        if digits:
+            agent_id = int(digits)
+        out.append(
+            {
+                "agent_id": agent_id,
+                "gremlin": gremlin_name,
+                "wall": wall_name,
+                "wall_class": classify_wall_geom_name(wall_name),
+            }
+        )
+    return out
+
+
+def nearest_interior_wall_debug(task: Any, agent_idx: int) -> dict[str, Any] | None:
+    """Closest interior ``Walls`` surface distance + expected lidar reading."""
+    walls = getattr(task, "walls", None)
+    if walls is None or not getattr(walls, "num", 0):
+        return None
+    agent = getattr(task, "agent", None)
+    if agent is None:
+        return None
+    agent_xy = np.asarray(agent.get_agent_pos(agent_idx), dtype=float)[:2]
+    exp_gain = float(getattr(getattr(task, "lidar_conf", None), "exp_gain", 0.5) or 0.5)
+    best: dict[str, Any] | None = None
+    for row in range(int(walls.num)):
+        if hasattr(walls, "closest_surface_pos"):
+            surf = np.asarray(walls.closest_surface_pos(agent_idx, row), dtype=float)
+        else:
+            surf = np.asarray(walls.pos[row], dtype=float)
+        dist = float(np.linalg.norm(agent_xy - surf[:2]))
+        los = None
+        if hasattr(task, "_lidar_line_of_sight"):
+            try:
+                los = bool(task._lidar_line_of_sight(agent_idx, surf, walls, row))
+            except Exception:  # noqa: BLE001 — debug only
+                los = None
+        cand = {
+            "row": row,
+            "dist": dist,
+            "expected_lidar": expected_pseudo_lidar(dist, exp_gain),
+            "los": los,
+            "surface_xy": surf[:2].tolist(),
+        }
+        if best is None or dist < best["dist"]:
+            best = cand
+    return best
+
+
+def remaining_surface_debug(task: Any, agent_idx: int) -> list[dict[str, Any]]:
+    """Per unrescued surface casualty: dist, LOS, expected lidar."""
+    surface = getattr(task, "surface_casualtys", None)
+    if surface is None:
+        return []
+    rescued = list(getattr(surface, "rescued", []) or [])
+    agent = getattr(task, "agent", None)
+    if agent is None:
+        return []
+    agent_xy = np.asarray(agent.get_agent_pos(agent_idx), dtype=float)[:2]
+    exp_gain = float(getattr(getattr(task, "lidar_conf", None), "exp_gain", 0.5) or 0.5)
+    rows: list[dict[str, Any]] = []
+    for row, is_rescued in enumerate(rescued):
+        if is_rescued:
+            continue
+        pos = np.asarray(surface.pos[row], dtype=float)
+        dist = float(np.linalg.norm(agent_xy - pos[:2]))
+        los = None
+        if hasattr(task, "_lidar_line_of_sight"):
+            try:
+                target = pos if pos.shape[0] >= 3 else np.r_[pos[:2], 0.0]
+                los = bool(task._lidar_line_of_sight(agent_idx, target, surface, row))
+            except Exception:  # noqa: BLE001 — debug only
+                los = None
+        rows.append(
+            {
+                "row": row,
+                "dist": dist,
+                "expected_lidar": expected_pseudo_lidar(dist, exp_gain),
+                "los": los,
+                "xy": pos[:2].tolist(),
+            }
+        )
+    return rows
+
+
 def print_ma_episode_done_debug(
     env: Any,
     info: dict[str, Any],
@@ -175,6 +304,20 @@ def print_ma_episode_done_debug(
     print(f"  propositions: {info.get('propositions')}")
     print(f"  surface_casualtys.rescued: {surface_rescued}")
     print(f"  entrapped_casualtys.rescued: {entrapped_rescued}")
+
+    # --- root-cause probes (wall cost vs lidar, blank all_surface reach) ---
+    contacts = collect_gremlin_wall_contacts(task)
+    print(f"  gremlin↔wall contacts now: {len(contacts)}")
+    for c in contacts:
+        print(
+            f"    agent_{c['agent_id']}: {c['gremlin']} ↔ {c['wall']} "
+            f"[{c['wall_class']}]"
+        )
+    if not contacts and wall_violation:
+        print(
+            "    (none live — cost may be first-frame-only / contact already cleared)"
+        )
+
     if reach is not None or avoid is not None:
         lidar_dim = int(task.lidar_conf.num_bins)
         print(f"  reach set: {reach}")
@@ -201,8 +344,31 @@ def print_ma_episode_done_debug(
             print(f"  agent_{agent_idx} reach_lidar: {_fmt_lidar(reach_obs)}")
             print(f"  agent_{agent_idx} avoid_lidar: {_fmt_lidar(avoid_obs)}")
             walls_key = walls_lidar_key(agent_idx)
+            walls_max = None
             if walls_key in original_obs:
+                walls_arr = np.asarray(original_obs[walls_key], dtype=float)
+                walls_max = float(walls_arr.max())
                 print(
                     f"  agent_{agent_idx} walls_lidar: "
-                    f"{_fmt_lidar(original_obs[walls_key])}"
+                    f"{_fmt_lidar(walls_arr)}"
+                )
+            nearest = nearest_interior_wall_debug(task, agent_idx)
+            if nearest is not None:
+                mismatch = (
+                    walls_max is not None
+                    and abs(walls_max - nearest["expected_lidar"]) > 0.15
+                )
+                print(
+                    f"  agent_{agent_idx} nearest interior wall: "
+                    f"row={nearest['row']} dist={nearest['dist']:.3f} "
+                    f"expected_lidar={nearest['expected_lidar']:.3f} "
+                    f"los={nearest['los']} "
+                    f"walls_lidar_max={walls_max} "
+                    f"{'MISMATCH' if mismatch else 'ok'}"
+                )
+            for row in remaining_surface_debug(task, agent_idx):
+                print(
+                    f"  agent_{agent_idx} remaining surface_{row['row']}: "
+                    f"dist={row['dist']:.3f} expected_lidar={row['expected_lidar']:.3f} "
+                    f"los={row['los']} xy={row['xy']}"
                 )

@@ -98,6 +98,18 @@ def test_ma_agent_cost_walls():
     ) == {"agent_0": 1.0, "agent_1": 0.0}
 
 
+def test_classify_wall_geom_name():
+    from envs.sar_deploy import classify_wall_geom_name, expected_pseudo_lidar
+
+    assert classify_wall_geom_name("wall0") == "interior"
+    assert classify_wall_geom_name("wall3") == "interior"
+    assert classify_wall_geom_name("ltl_wall0") == "arena_ltl"
+    assert classify_wall_geom_name("ltl_walls2") == "arena_ltl"
+    assert classify_wall_geom_name("building0_ltl_walls0") == "building_perimeter"
+    assert abs(expected_pseudo_lidar(0.175) - float(__import__("numpy").exp(-0.5 * 0.175))) < 1e-9
+    assert abs(expected_pseudo_lidar(2.0) - float(__import__("numpy").exp(-1.0))) < 1e-9
+
+
 def test_infer_shapes_raw_feature_dim_matches_preprocess_for_legacy_checkpoint():
     state = _fake_safety_state_dict(feat_dim=96, env_net_layers=[128, 64])
     state["actor.enc.0.weight"] = __import__("torch").zeros(64, 96)
