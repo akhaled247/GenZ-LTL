@@ -1,7 +1,6 @@
 """Shared-policy MA coordinator: one Büchi search, per-agent SAR features."""
 from __future__ import annotations
 
-import copy
 from typing import Any
 
 import numpy as np
@@ -94,16 +93,19 @@ class MultiAgentSARCoordinator:
             reach_names = sorted({p for a in reach for p in a.get_true_propositions()})
             if "walls" in reach_names:
                 print("ERROR: walls still in feature reach after sanitize — bug")
-        actions: dict[str, np.ndarray] = {}
+        # Shallow top-level copy only — features/goal replaced per agent; ldba shared read-only.
+        obss = []
         for agent_idx in range(self.num_agents):
-            obs_i = copy.deepcopy(obs)
+            obs_i = dict(obs)
             obs_i["goal"] = self.sequence
             obs_i["features"] = sar_preprocess_for_deploy(
                 self.env, self.model, reach, avoid, agent_idx=agent_idx,
             )
-            self._forward_agent.agent_idx = agent_idx
-            action = self._forward_agent.forward(obs_i, deterministic).flatten()
-            actions[f"agent_{agent_idx}"] = action
+            obss.append(obs_i)
+        batched = self._forward_agent.forward(obss, deterministic)
+        actions: dict[str, np.ndarray] = {}
+        for agent_idx in range(self.num_agents):
+            actions[f"agent_{agent_idx}"] = np.asarray(batched[agent_idx]).flatten()
         return actions
 
 

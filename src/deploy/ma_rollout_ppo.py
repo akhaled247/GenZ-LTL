@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import random
+from typing import Sequence
 
 import numpy as np
 import torch
@@ -10,6 +11,7 @@ from tqdm import tqdm
 from deploy.coordinator import MultiAgentSARCoordinator
 from deploy.env_check import assert_sar_wc_paper_protocol
 from deploy.eval_stack import build_sar_ltl_eval_stack
+from deploy.parallel_eval import run_sharded_ma_eval
 from envs.sar_deploy import (
     check_rabinizer,
     ma_episode_success,
@@ -25,18 +27,22 @@ TRAIN_ENV = "PointLTL0MASAR1WC-v0"
 EVAL_ENV = MA_EVAL_ENV_DEFAULT
 
 
-def simulate_ma_ppo(
+def _ma_ppo_shard_worker(kwargs: dict) -> tuple[int, int, int, list[int], list[float]]:
+    return _simulate_ma_ppo_episodes(**kwargs)
+
+
+def _simulate_ma_ppo_episodes(
     eval_env: str,
     train_env: str,
     gamma: float,
     exp: str,
     seed: int,
-    num_episodes: int,
     formula: str,
     render: bool,
-    deterministic: bool = True,
-    debug_done: bool = False,
-):
+    deterministic: bool,
+    debug_done: bool,
+    episode_indices: Sequence[int],
+) -> tuple[int, int, int, list[int], list[float]]:
     check_rabinizer()
 
     random.seed(seed)
@@ -72,11 +78,13 @@ def simulate_ma_ppo(
     steps: list[int] = []
     rets: list[float] = []
 
-    pbar = range(num_episodes)
+    indices = list(episode_indices)
+    pbar = range(len(indices))
     if not render:
-        pbar = tqdm(pbar)
+        pbar = tqdm(pbar, desc=f"eps[{indices[0]}-{indices[-1]}]" if indices else "eps")
 
-    for i in pbar:
+    for local_i in pbar:
+        i = indices[local_i]
         obs, info = env.reset(seed=seed + i), {}
         if render:
             print(obs["goal"])
@@ -117,20 +125,69 @@ def simulate_ma_ppo(
                     num_violations += 1
                 rets.append(int(success) * gamma ** (num_steps - 1))
                 if not render:
+                    done_so_far = local_i + 1
                     pbar.set_postfix({
-                        "S": num_successes / (i + 1),
-                        "V": num_violations / (i + 1),
+                        "S": num_successes / done_so_far,
+                        "V": num_violations / done_so_far,
                         "ADR": np.mean(rets),
                         "AS": np.mean(steps) if steps else 0,
                     })
 
     env.close()
-    average_steps = np.mean(steps) if steps else float("nan")
-    adr = np.mean(rets) if rets else 0.0
-    print(
-        f"{seed}: {num_successes / num_episodes:.3f},"
-        f"{num_violations / num_episodes:.3f},"
-        f"{num_unreachable / num_episodes:.3f},"
-        f"{adr:.3f},{average_steps:.3f}"
+    return num_successes, num_violations, num_unreachable, steps, rets
+
+
+def simulate_ma_ppo(
+    eval_env: str,
+    train_env: str,
+    gamma: float,
+    exp: str,
+    seed: int,
+    num_episodes: int,
+    formula: str,
+    render: bool,
+    deterministic: bool = True,
+    debug_done: bool = False,
+    num_workers: int = 1,
+    episode_indices: Sequence[int] | None = None,
+):
+    if render and num_workers > 1:
+        raise ValueError("render=True requires num_workers=1")
+
+    if episode_indices is not None:
+        shard = _simulate_ma_ppo_episodes(
+            eval_env, train_env, gamma, exp, seed, formula,
+            render, deterministic, debug_done, episode_indices,
+        )
+        from deploy.parallel_eval import aggregate_ma_shards
+        return aggregate_ma_shards(
+            [shard], seed=seed, num_episodes=len(episode_indices),
+        )
+
+    workers = max(1, int(num_workers))
+    if workers == 1:
+        shard = _simulate_ma_ppo_episodes(
+            eval_env, train_env, gamma, exp, seed, formula,
+            render, deterministic, debug_done, range(num_episodes),
+        )
+        from deploy.parallel_eval import aggregate_ma_shards
+        return aggregate_ma_shards([shard], seed=seed, num_episodes=num_episodes)
+
+    base = {
+        "eval_env": eval_env,
+        "train_env": train_env,
+        "gamma": gamma,
+        "exp": exp,
+        "seed": seed,
+        "formula": formula,
+        "render": False,
+        "deterministic": deterministic,
+        "debug_done": debug_done,
+    }
+    return run_sharded_ma_eval(
+        _ma_ppo_shard_worker,
+        base,
+        num_episodes=num_episodes,
+        num_workers=workers,
+        env_name=eval_env,
     )
-    return num_successes, num_violations, average_steps

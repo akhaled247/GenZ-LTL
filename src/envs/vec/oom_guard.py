@@ -71,6 +71,15 @@ def estimate_env_rss_bytes(env_name: str) -> int:
     return mb * 1024 * 1024
 
 
+def estimate_eval_worker_rss_bytes(env_name: str) -> int:
+    """RSS for one MA eval spawn worker (MuJoCo env + policy + LDBA)."""
+    override = os.environ.get("GENZ_EVAL_WORKER_RSS_MB", "").strip()
+    if override:
+        return max(64, int(override)) * 1024 * 1024
+    # Heavier than train env-only workers: each spawn loads ckpt + search.
+    return int(estimate_env_rss_bytes(env_name) * 1.5)
+
+
 def reserve_bytes() -> int:
     gb = float(os.environ.get("GENZ_RAM_RESERVE_GB", str(_DEFAULT_RESERVE_GB)))
     return max(1.0, gb) * 1024 ** 3
@@ -168,6 +177,71 @@ def safe_num_procs(
         num_procs=requested,
         clamped=False,
         reason=f"num_procs={requested} within caps ({binding[1]}).",
+    )
+
+
+def safe_num_eval_workers(
+    requested: int,
+    *,
+    env_name: str,
+) -> OomGuardDecision:
+    """Clamp MA eval ``num_workers`` before spawn Pool (each worker = full env+ckpt)."""
+    if requested < 1:
+        raise ValueError(f"num_workers must be >= 1, got {requested}")
+    if requested == 1:
+        return OomGuardDecision(
+            num_procs=1,
+            clamped=False,
+            reason="num_workers=1 (serial).",
+        )
+
+    caps: list[tuple[int, str]] = [(requested, "requested")]
+    hard = max_procs_hard_cap()
+    caps.append((hard, f"GENZ_MAX_PROCS/hard={hard}"))
+
+    cpus = cpu_count()
+    cpu_cap = max(1, cpus - 1)
+    caps.append((cpu_cap, f"cpu_count-1={cpu_cap}"))
+
+    avail = available_ram_bytes()
+    per_worker = estimate_eval_worker_rss_bytes(env_name)
+    headroom = reserve_bytes()
+    if avail is not None:
+        budget = max(0, avail - headroom)
+        ram_cap = max(1, int(budget // per_worker)) if per_worker > 0 else requested
+        caps.append(
+            (
+                ram_cap,
+                f"ram≈{avail / 1024**3:.1f}GiB avail, reserve={headroom / 1024**3:.1f}GiB, "
+                f"~{per_worker / 1024**2:.0f}MiB/eval-worker",
+            )
+        )
+
+    chosen = min(c[0] for c in caps)
+    binding = next(c for c in caps if c[0] == chosen)
+    if chosen < requested and not force_num_procs():
+        return OomGuardDecision(
+            num_procs=chosen,
+            clamped=True,
+            reason=(
+                f"Clamped num_workers {requested} → {chosen} ({binding[1]}). "
+                f"Override: GENZ_FORCE_NUM_PROCS=1 or set GENZ_EVAL_WORKER_RSS_MB / "
+                f"GENZ_RAM_RESERVE_GB."
+            ),
+        )
+    if chosen < requested and force_num_procs():
+        return OomGuardDecision(
+            num_procs=requested,
+            clamped=False,
+            reason=(
+                f"GENZ_FORCE_NUM_PROCS=1: keeping num_workers={requested} despite cap "
+                f"{chosen} ({binding[1]})."
+            ),
+        )
+    return OomGuardDecision(
+        num_procs=requested,
+        clamped=False,
+        reason=f"num_workers={requested} within caps ({binding[1]}).",
     )
 
 

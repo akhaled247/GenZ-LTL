@@ -12,6 +12,15 @@ def main():
     parser.add_argument("--exp", type=str, default="GenZ-SAR-s0")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--num_episodes", type=int, default=100)
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=1,
+        help=(
+            "Parallel episode shards (reset seed=seed+i). Auto-clamped by RAM/CPU "
+            "via envs.vec.oom_guard; override with GENZ_FORCE_NUM_PROCS=1."
+        ),
+    )
     parser.add_argument("--formula", type=str, default=MA_EVAL_FORMULA_DEFAULT)
     parser.add_argument("--render", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--debug-done", action=argparse.BooleanOptionalAction, default=False)
@@ -29,6 +38,7 @@ def main():
         args.render,
         args.deterministic,
         args.debug_done,
+        num_workers=args.num_workers,
     )
 
 

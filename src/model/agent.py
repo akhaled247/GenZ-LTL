@@ -59,6 +59,8 @@ class Agent:
         return self.forward(obs, deterministic)
 
     def forward(self, obs, deterministic=False) -> np.ndarray:
+        if not (isinstance(obs, list) or isinstance(obs, tuple)):
+            obs = [obs]
         if self.sequence is not None:
             reach, avoid = self.sequence[0]
             stripped = strip_walls_from_reach_set(reach, avoid, self.propositions)
@@ -67,18 +69,17 @@ class Agent:
             feat_shape = resolve_feat_shape(
                 self.model, sar_task(self.env).lidar_conf.num_bins,
             )
-            features = obs["features"]
-            needs_preprocess = (
-                not hasattr(features, "shape")
-                or tuple(features.shape) != feat_shape
-            )
-            if needs_preprocess:
-                obs["features"] = sar_preprocess_for_deploy(
-                    self.env, self.model, reach, avoid,
-                    agent_idx=getattr(self, "agent_idx", 0),
+            for i, o in enumerate(obs):
+                features = o["features"]
+                needs_preprocess = (
+                    not hasattr(features, "shape")
+                    or tuple(features.shape) != feat_shape
                 )
-        if not (isinstance(obs, list) or isinstance(obs, tuple)):
-            obs = [obs]
+                if needs_preprocess:
+                    obs[i]["features"] = sar_preprocess_for_deploy(
+                        self.env, self.model, reach, avoid,
+                        agent_idx=getattr(self, "agent_idx", i),
+                    )
         preprocessed = preprocessing.preprocess_obss(obs, self.propositions, device=self.device)
         with torch.no_grad():
             out = self.model(preprocessed)
