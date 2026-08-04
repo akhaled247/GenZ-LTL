@@ -25,6 +25,7 @@ from utils.logging.multi_logger import MultiLogger
 from utils.logging.text_logger import TextLogger
 from utils.logging.wandb_logger import WandbLogger
 from utils.model_store import ModelStore
+from envs.vec.oom_guard import apply_oom_guardrails
 from config import *
 
 
@@ -35,6 +36,10 @@ class Trainer:
         self.model_store = ModelStore.from_config(args)
 
     def train(self, log_csv: bool = True, log_wandb: bool = False):
+        apply_oom_guardrails(
+            self.args.experiment,
+            log=lambda msg: self.text_logger.important_info(msg),
+        )
         training_status, resuming = self.get_training_status()
         envs = self.make_envs(training_status["curriculum_stage"])
         if resuming:

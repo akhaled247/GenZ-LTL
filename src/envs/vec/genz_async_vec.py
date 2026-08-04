@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import os
+import time
 import traceback
 from multiprocessing import Pipe, get_context
 from typing import Any, Callable
 
 import numpy as np
+
+from envs.vec.oom_guard import mem_available_below_reserve, reserve_bytes, available_ram_bytes
 
 
 def _mp_context() -> str:
@@ -17,6 +20,14 @@ def _mp_context() -> str:
     if method not in {"spawn", "fork", "forkserver"}:
         raise ValueError(f"Invalid GENZ_MP_START_METHOD={method!r}")
     return method
+
+
+def _spawn_batch_size() -> int:
+    raw = os.environ.get("GENZ_SPAWN_BATCH", "4").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 4
 
 
 def _genz_worker(conn, env_fn: Callable[[], Any]) -> None:
@@ -68,21 +79,32 @@ class GenZSafetyAsyncEnv:
         self._processes: list[Any] = []
 
         ctx = get_context(_mp_context())
-        for env_fn in env_fns:
-            local, remote = Pipe()
-            proc = ctx.Process(target=_genz_worker, args=(remote, env_fn))
-            proc.daemon = True
-            proc.start()
-            remote.close()
-            self._locals.append(local)
-            self._processes.append(proc)
+        batch = _spawn_batch_size()
+        for start in range(0, len(env_fns), batch):
+            if start > 0 and mem_available_below_reserve():
+                avail = available_ram_bytes()
+                self.close()
+                raise RuntimeError(
+                    f"Aborting async env spawn after {start}/{len(env_fns)} workers: "
+                    f"MemAvailable={None if avail is None else f'{avail / 1024**3:.2f}GiB'} "
+                    f"below GENZ_RAM_RESERVE "
+                    f"({reserve_bytes() / 1024**3:.1f}GiB). Lower --num_procs or reserve."
+                )
+            chunk = env_fns[start : start + batch]
+            for env_fn in chunk:
+                local, remote = Pipe()
+                proc = ctx.Process(target=_genz_worker, args=(remote, env_fn))
+                proc.daemon = True
+                proc.start()
+                remote.close()
+                self._locals.append(local)
+                self._processes.append(proc)
+            # Let RSS settle between batches (host OOM thrash prevention).
+            if start + batch < len(env_fns):
+                time.sleep(0.15)
 
     def __del__(self) -> None:
-        for local in self._locals:
-            try:
-                local.send(("kill", None))
-            except (BrokenPipeError, OSError):
-                pass
+        self.close()
 
     def _recv(self, local: Any, idx: int) -> Any:
         try:
@@ -108,10 +130,10 @@ class GenZSafetyAsyncEnv:
     def step(self, actions: np.ndarray) -> tuple[tuple, tuple, tuple, tuple]:
         if actions.ndim == 1:
             actions = actions.reshape(self.num_envs, -1)
-        results = []
-        for i, (local, action) in enumerate(zip(self._locals, actions)):
+        # Send all first, then recv — true parallel workers (not serial send/recv).
+        for local, action in zip(self._locals, actions):
             local.send(("step", np.asarray(action)))
-            results.append(self._recv(local, i))
+        results = [self._recv(local, i) for i, local in enumerate(self._locals)]
         return tuple(zip(*results))
 
     def close(self) -> None:
@@ -121,7 +143,12 @@ class GenZSafetyAsyncEnv:
             except (BrokenPipeError, OSError):
                 pass
         for proc in self._processes:
-            proc.join(timeout=1)
+            try:
+                proc.join(timeout=1)
+            except Exception:
+                pass
+        self._locals.clear()
+        self._processes.clear()
 
 
 def build_genz_async_vec(

@@ -28,6 +28,7 @@ from utils.model_store import ModelStore
 from envs.seq_wrapper import sar_task
 from utils.deploy_meta import build_deploy_meta, load_deploy_meta, FEAT_RECIPE_ZONE_COMPAT
 from deploy.feature_recipe import infer_feat_recipe
+from envs.vec.oom_guard import apply_oom_guardrails
 from config import *
 
 
@@ -38,6 +39,10 @@ class Trainer:
         self.model_store = ModelStore.from_config(args)
 
     def train(self, log_csv: bool = True, log_wandb: bool = False):
+        apply_oom_guardrails(
+            self.args.experiment,
+            log=lambda msg: self.text_logger.important_info(msg),
+        )
         training_status, resuming = self.get_training_status()
         envs = self.make_envs(training_status["curriculum_stage"])
         if resuming:
