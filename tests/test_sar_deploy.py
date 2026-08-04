@@ -30,10 +30,11 @@ def test_resolve_sar_feat_shape_legacy_input_feat_dim():
 
 def test_sar_preprocess_for_deploy_passes_feat_shape():
     env = MagicMock()
+    env.spec.id = "PointLTL1MASAR1WC-v0"
     env.pre_process_obs_sar.return_value = np.zeros(96, dtype=np.float32)
     model = SimpleNamespace(raw_feature_dim=96, feat_recipe="legacy_v0")
     task = SimpleNamespace(lidar_conf=SimpleNamespace(num_bins=10))
-    with patch("deploy.feature_recipe.sar_task", return_value=task):
+    with patch("envs.seq_wrapper.sar_task", return_value=task):
         out = sar_preprocess_for_deploy(env, model, "reach", "avoid", agent_idx=1)
     env.pre_process_obs_sar.assert_called_once_with(
         "reach",
@@ -43,6 +44,17 @@ def test_sar_preprocess_for_deploy_passes_feat_shape():
         allow_legacy_padding=True,
     )
     assert out.shape == (96,)
+
+
+def test_sar_preprocess_for_deploy_routes_pointltl_safety_to_zones():
+    env = MagicMock()
+    env.spec.id = "PointLtlSafety2-v0"
+    env.pre_process_obs_zones.return_value = np.zeros(48, dtype=np.float32)
+    model = SimpleNamespace(raw_feature_dim=48, feat_recipe="sar_v1")
+    out = sar_preprocess_for_deploy(env, model, "reach", "avoid", agent_idx=0)
+    env.pre_process_obs_zones.assert_called_once_with("reach", "avoid")
+    env.pre_process_obs_sar.assert_not_called()
+    assert out.shape == (48,)
 
 
 def test_ma_episode_success_from_goal_met():

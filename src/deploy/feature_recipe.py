@@ -70,6 +70,12 @@ def apply_zone_compat_deploy_meta(deploy_meta: dict[str, Any], lidar_bins: int =
     return meta
 
 
+def _env_spec_id(env: Any) -> str:
+    spec = getattr(env, "spec", None)
+    env_id = getattr(spec, "id", None) if spec is not None else None
+    return env_id if isinstance(env_id, str) else ""
+
+
 def sar_preprocess_for_deploy(
     env: Any,
     model: Any,
@@ -78,7 +84,18 @@ def sar_preprocess_for_deploy(
     *,
     agent_idx: int = 0,
 ) -> Any:
-    """Build goal-conditioned SAR features using deploy_meta / model recipe."""
+    """Build goal-conditioned features for SAR or zone safety deploy.
+
+    ``LDBAWrapper`` exposes both ``pre_process_obs_sar`` and
+    ``pre_process_obs_zones``. Prefer zones for ``PointLtlSafety*`` so color
+    props (``blue``, ``green``, …) are not parsed as SAR casualty keys.
+    """
+    env_id = _env_spec_id(env)
+    if "PointLtlSafety" in env_id and hasattr(env, "pre_process_obs_zones"):
+        return env.pre_process_obs_zones(reach, avoid)
+    if "LetterSafety" in env_id and hasattr(env, "pre_process_obs_letter"):
+        return env.pre_process_obs_letter(reach, avoid)
+
     from envs.seq_wrapper import sar_task
 
     lidar_bins = sar_task(env).lidar_conf.num_bins
