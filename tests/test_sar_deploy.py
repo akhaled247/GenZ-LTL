@@ -110,6 +110,35 @@ def test_classify_wall_geom_name():
     assert abs(expected_pseudo_lidar(2.0) - float(__import__("numpy").exp(-1.0))) < 1e-9
 
 
+def test_remaining_surface_debug_reports_sticky_fields():
+    from envs.sar_deploy import remaining_surface_debug
+
+    surface = SimpleNamespace(
+        rescued=[False, True],
+        pos=[np.array([1.0, 2.0, 0.1]), np.array([3.0, 4.0, 0.1])],
+        name="surface_casualtys",
+        num=2,
+    )
+    agent = SimpleNamespace(get_agent_pos=lambda _i: np.array([0.0, 0.0, 0.1]))
+    task = SimpleNamespace(
+        surface_casualtys=surface,
+        agent=agent,
+        lidar_conf=SimpleNamespace(exp_gain=0.5),
+        _surface_last_seen={0: {0: np.array([1.0, 2.0])}},
+        _surface_sticky_active={0: {0}},
+        _casualty_lidar_skip_rows={"surface_casualtys": frozenset({1})},
+        _lidar_line_of_sight=lambda *_a, **_k: False,
+        _lidar_ray_first_observable_geom=lambda *_a, **_k: (None, -1.0),
+        model=None,
+    )
+    rows = remaining_surface_debug(task, 0)
+    assert len(rows) == 1
+    assert rows[0]["row"] == 0
+    assert rows[0]["sticky"] is True
+    assert rows[0]["last_seen_xy"] == [1.0, 2.0]
+    assert rows[0]["los"] is False
+
+
 def test_infer_shapes_raw_feature_dim_matches_preprocess_for_legacy_checkpoint():
     state = _fake_safety_state_dict(feat_dim=96, env_net_layers=[128, 64])
     state["actor.enc.0.weight"] = __import__("torch").zeros(64, 96)
