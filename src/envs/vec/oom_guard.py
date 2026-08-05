@@ -14,6 +14,9 @@ _DEFAULT_SAR_RSS_MB = 750
 _DEFAULT_POINT_RSS_MB = 400
 _DEFAULT_RESERVE_GB = 6.0
 _DEFAULT_MAX_PROCS_HARD = 32
+# CLI ``steps_per_process`` is defined at this worker count (healthy SAR recipe).
+# Override: GENZ_ROLLOUT_REF_PROCS.
+_DEFAULT_ROLLOUT_REF_PROCS = 24
 
 
 @dataclass(frozen=True)
@@ -23,26 +26,34 @@ class OomGuardDecision:
     reason: str
 
 
+def rollout_ref_procs() -> int:
+    raw = os.environ.get("GENZ_ROLLOUT_REF_PROCS", "").strip()
+    if raw:
+        return max(1, int(raw))
+    return _DEFAULT_ROLLOUT_REF_PROCS
+
+
 def compensate_steps_per_process(
-    requested_num_procs: int,
-    clamped_num_procs: int,
+    reference_num_procs: int,
+    actual_num_procs: int,
     steps_per_process: int,
 ) -> int:
-    """Keep frames/update ≥ ``steps_per_process * requested`` after a proc clamp.
+    """Scale ``steps_per_process`` so frames/update match the reference rollout.
 
-    Rollout size is ``steps_per_process * num_procs``. When OOM guard reduces
-    ``num_procs``, raise ``steps_per_process`` (ceil) so each PPO/RCO update still
-    sees ~the same number of timesteps.
+    Reference rollout is ``steps_per_process * reference_num_procs`` (default
+    reference = 24). If ``actual_num_procs`` differs (user chose 1, or OOM
+    clamped 24→8), raise/lower ``steps_per_process`` (ceil) so each update still
+    sees ≈ that many timesteps.
     """
     if (
-        requested_num_procs < 1
-        or clamped_num_procs < 1
+        reference_num_procs < 1
+        or actual_num_procs < 1
         or steps_per_process < 1
-        or clamped_num_procs >= requested_num_procs
+        or actual_num_procs == reference_num_procs
     ):
         return steps_per_process
-    target = steps_per_process * requested_num_procs
-    return (target + clamped_num_procs - 1) // clamped_num_procs
+    target = steps_per_process * reference_num_procs
+    return (target + actual_num_procs - 1) // actual_num_procs
 
 
 def available_ram_bytes() -> int | None:
@@ -275,8 +286,9 @@ def apply_oom_guardrails(
 ) -> OomGuardDecision:
     """Mutate ``experiment.num_procs`` (and optionally algo ``steps_per_process``).
 
-    If procs are clamped, scale ``algo_config.steps_per_process`` so
-    frames/update stay ≈ ``original_spp * requested_num_procs``.
+    After OOM clamp, scale ``algo_config.steps_per_process`` so frames/update
+    stay ≈ ``spp * GENZ_ROLLOUT_REF_PROCS`` (default 24) — including when the
+    user passes ``--num_procs 1`` (or any count ≠ 24).
     """
     log = log or (lambda msg: warnings.warn(msg, stacklevel=2))
     requested = int(experiment.num_procs)
@@ -289,20 +301,21 @@ def apply_oom_guardrails(
     log(f"[oom_guard] {decision.reason}")
     if decision.clamped:
         experiment.num_procs = decision.num_procs
-        if algo_config is not None and hasattr(algo_config, "steps_per_process"):
-            old_spp = int(algo_config.steps_per_process)
-            new_spp = compensate_steps_per_process(
-                requested, decision.num_procs, old_spp
+
+    if algo_config is not None and hasattr(algo_config, "steps_per_process"):
+        ref = rollout_ref_procs()
+        old_spp = int(algo_config.steps_per_process)
+        actual = int(experiment.num_procs)
+        new_spp = compensate_steps_per_process(ref, actual, old_spp)
+        if new_spp != old_spp:
+            algo_config.steps_per_process = new_spp
+            old_rollout = old_spp * ref
+            new_rollout = new_spp * actual
+            log(
+                f"[oom_guard] Preserved rollout vs {ref} procs: steps_per_process "
+                f"{old_spp} -> {new_spp} "
+                f"(frames/update {old_rollout} -> {new_rollout}; num_procs={actual})"
             )
-            if new_spp != old_spp:
-                algo_config.steps_per_process = new_spp
-                old_rollout = old_spp * requested
-                new_rollout = new_spp * decision.num_procs
-                log(
-                    f"[oom_guard] Preserved rollout: steps_per_process "
-                    f"{old_spp} → {new_spp} "
-                    f"(frames/update {old_rollout} → {new_rollout})"
-                )
     return decision
 
 
