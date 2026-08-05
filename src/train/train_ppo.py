@@ -68,6 +68,14 @@ class Trainer:
         logger = self.make_logger(log_csv, log_wandb, resuming)
         logger.log_config()
 
+        rollout = (
+            self.args.ppo.steps_per_process * self.args.experiment.num_procs
+        )
+        self.text_logger.info(
+            f"Rollout: steps_per_process={self.args.ppo.steps_per_process} × "
+            f"num_procs={self.args.experiment.num_procs} = {rollout} frames/update "
+            f"(vec_backend={self.args.experiment.vec_backend})"
+        )
         self.text_logger.info(f'Num parameters: {torch_utils.get_number_of_params(model)}')
         num_steps = training_status["num_steps"]
         num_updates = training_status["num_updates"]

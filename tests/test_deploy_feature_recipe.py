@@ -41,15 +41,20 @@ def test_infer_feat_recipe_zone_compat_at_48():
     assert infer_feat_recipe(raw, lidar_bins) == FEAT_RECIPE_ZONE_COMPAT
 
 
-def test_resolve_zone_compat_false_for_sar_train():
+def test_resolve_zone_compat_cli_and_recipe():
     assert is_zone_safety_train_env("PointLtlSafety2-v0")
     assert not is_zone_safety_train_env("PointLTL1MASAR1WC-v0")
+    # SAR: CLI alone does not flip packing (would mismatch 64/80-d weights).
     assert resolve_zone_compat("PointLTL1MASAR1WC-v0", True) is False
+    # SAR zc48 checkpoint: feat_recipe wins.
+    assert resolve_zone_compat(
+        "PointLTL1MASAR1WC-v0", False, feat_recipe=FEAT_RECIPE_ZONE_COMPAT,
+    ) is True
     assert resolve_zone_compat("PointLtlSafety2-v0", True) is True
     assert resolve_zone_compat("PointLtlSafety2-v0", False) is False
 
 
-def test_ensure_sar_v1_restores_indep_walls_on_stale_zone_meta():
+def test_ensure_sar_v1_preserves_intentional_zone_compat():
     meta = ensure_sar_v1_indep_lidars(
         {
             "train_env": "PointLTL1MASAR1WC-v0",
@@ -58,11 +63,24 @@ def test_ensure_sar_v1_restores_indep_walls_on_stale_zone_meta():
         },
         lidar_bins=16,
     )
+    assert meta["feat_recipe"] == FEAT_RECIPE_ZONE_COMPAT
+    assert meta["raw_feature_dim"] == 48
+
+
+def test_ensure_sar_v1_restores_walls_on_stale_zone_recipe():
+    meta = ensure_sar_v1_indep_lidars(
+        {
+            "train_env": "PointLTL1MASAR1WC-v0",
+            "raw_feature_dim": 80,
+            "feat_recipe": FEAT_RECIPE_ZONE_COMPAT,
+        },
+        lidar_bins=16,
+    )
     assert meta["feat_recipe"] == FEAT_RECIPE_SAR_V1
     assert meta["raw_feature_dim"] == 80
 
 
-def test_apply_zone_compat_noop_recipe_for_sar_train():
+def test_apply_zone_compat_noop_recipe_for_sar_v1_train():
     meta = apply_zone_compat_deploy_meta(
         {
             "train_env": "PointLTL1MASAR1WC-v0",
@@ -73,6 +91,19 @@ def test_apply_zone_compat_noop_recipe_for_sar_train():
     )
     assert meta["feat_recipe"] == FEAT_RECIPE_SAR_V1
     assert meta["raw_feature_dim"] == 80
+
+
+def test_apply_zone_compat_keeps_sar_zc48():
+    meta = apply_zone_compat_deploy_meta(
+        {
+            "train_env": "PointLTL1MASAR1WC-v0",
+            "raw_feature_dim": 48,
+            "feat_recipe": FEAT_RECIPE_ZONE_COMPAT,
+        },
+        lidar_bins=16,
+    )
+    assert meta["feat_recipe"] == FEAT_RECIPE_ZONE_COMPAT
+    assert meta["raw_feature_dim"] == 48
 
 
 def test_apply_zone_compat_for_zones_train():
