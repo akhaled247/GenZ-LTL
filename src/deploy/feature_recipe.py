@@ -25,16 +25,17 @@ def resolve_zone_compat(
     *,
     feat_recipe: str | None = None,
 ) -> bool:
-    """Zone-compat packing only for Zone→SAR transfer.
+    """True when features must pack as 48-d agent|reach|avoid.
 
-    SAR-trained ckpts (MASAR*) always keep proposition-independent buildings +
-    walls lidar slices (``sar_v1``), even if CLI/meta asks for zone_compat.
+    Checkpoint ``feat_recipe=zone_compat`` wins (SAR ``zc48`` train or Zone
+    transfer). Zone ``train_env``: CLI ``--zone-compat`` also enables packing.
+    SAR without zone recipe: ignore CLI alone (would mismatch 64/80-d weights).
     """
-    if not is_zone_safety_train_env(train_env):
-        return False
     if feat_recipe == FEAT_RECIPE_ZONE_COMPAT:
         return True
-    return bool(zone_compat_requested)
+    if is_zone_safety_train_env(train_env):
+        return bool(zone_compat_requested)
+    return False
 
 
 def canonical_raw_dim(
@@ -93,22 +94,23 @@ def attach_model_deploy_fields(model: Any, deploy_meta: dict[str, Any]) -> None:
 def apply_zone_compat_deploy_meta(deploy_meta: dict[str, Any], lidar_bins: int = 16) -> dict[str, Any]:
     """Force zone_compat recipe fields for Zone→SAR eval (copy).
 
-    No-op (returns copy unchanged recipe-wise) when ``train_env`` is SAR — those
-    ckpts keep independent buildings/walls slices.
+    Zone train / missing ``train_env``: set 48-d zone_compat.
+    SAR train: keep intentional ``zc48`` meta; leave ``sar_v1`` unchanged.
     """
     meta = dict(deploy_meta)
     train_env = meta.get("train_env")
-    if not is_zone_safety_train_env(train_env):
-        # Keep / restore sar_v1 dims from raw_feature_dim when possible.
-        raw = int(meta.get("raw_feature_dim", canonical_raw_dim(lidar_bins, include_walls_lidar=True)))
-        meta["feat_recipe"] = infer_feat_recipe(raw, lidar_bins)
-        if meta["feat_recipe"] == FEAT_RECIPE_ZONE_COMPAT:
-            # Ambiguous 48-d on a SAR train_env — prefer walls-on sar_v1 layout.
-            meta["feat_recipe"] = FEAT_RECIPE_SAR_V1
-            meta["raw_feature_dim"] = canonical_raw_dim(lidar_bins, include_walls_lidar=True)
+    dim_zone = canonical_raw_dim(lidar_bins, zone_compat=True)
+    if train_env is None or is_zone_safety_train_env(train_env):
+        meta["feat_recipe"] = FEAT_RECIPE_ZONE_COMPAT
+        meta["raw_feature_dim"] = dim_zone
         return meta
-    meta["feat_recipe"] = FEAT_RECIPE_ZONE_COMPAT
-    meta["raw_feature_dim"] = canonical_raw_dim(lidar_bins, zone_compat=True)
+    raw = int(meta.get("raw_feature_dim", 0))
+    if meta.get("feat_recipe") == FEAT_RECIPE_ZONE_COMPAT or raw == dim_zone:
+        meta["feat_recipe"] = FEAT_RECIPE_ZONE_COMPAT
+        meta["raw_feature_dim"] = dim_zone
+        return meta
+    if raw:
+        meta["feat_recipe"] = infer_feat_recipe(raw, lidar_bins)
     return meta
 
 
@@ -118,7 +120,7 @@ def ensure_sar_v1_indep_lidars(
     lidar_bins: int = 16,
     include_walls_lidar: bool | None = None,
 ) -> dict[str, Any]:
-    """For SAR-trained runs, force proposition-independent buildings (+ walls)."""
+    """Align SAR deploy meta to weight dims (sar_v1 or intentional zone_compat)."""
     meta = dict(deploy_meta)
     train_env = meta.get("train_env")
     if is_zone_safety_train_env(train_env):
@@ -129,15 +131,22 @@ def ensure_sar_v1_indep_lidars(
     dim_walls = canonical_raw_dim(lidar_bins, include_walls_lidar=True)
     dim_zone = canonical_raw_dim(lidar_bins, zone_compat=True)
 
+    # Intentional SAR zone_compat train (zc48): keep 48-d packing.
+    if raw == dim_zone or (
+        meta.get("feat_recipe") == FEAT_RECIPE_ZONE_COMPAT
+        and raw not in (dim_no_walls, dim_walls)
+    ):
+        meta["raw_feature_dim"] = dim_zone
+        meta["feat_recipe"] = FEAT_RECIPE_ZONE_COMPAT
+        meta["entr_bldg_obs"] = False
+        return meta
+
+    # Stale zone_compat recipe on a 64/80-d sar_v1 ckpt — trust raw dims.
     if include_walls_lidar is None:
         if raw == dim_walls:
             include_walls = True
         elif raw == dim_no_walls:
             include_walls = False
-        elif raw == dim_zone or meta.get("feat_recipe") == FEAT_RECIPE_ZONE_COMPAT:
-            # Stale zone_compat meta on a SAR ckpt — restore L1-style walls channel.
-            include_walls = True
-            meta["raw_feature_dim"] = dim_walls
         else:
             # Prefer walls for L1+/named wall levels; else keep raw and recipe infer.
             include_walls = any(
@@ -152,13 +161,7 @@ def ensure_sar_v1_indep_lidars(
             lidar_bins, include_walls_lidar=include_walls,
         )
 
-    recipe = infer_feat_recipe(int(meta["raw_feature_dim"]), lidar_bins)
-    if recipe == FEAT_RECIPE_ZONE_COMPAT:
-        recipe = FEAT_RECIPE_SAR_V1
-        meta["raw_feature_dim"] = canonical_raw_dim(
-            lidar_bins, include_walls_lidar=include_walls,
-        )
-    meta["feat_recipe"] = recipe
+    meta["feat_recipe"] = infer_feat_recipe(int(meta["raw_feature_dim"]), lidar_bins)
     meta["entr_bldg_obs"] = bool(meta.get("entr_bldg_obs", False))
     return meta
 
@@ -240,8 +243,6 @@ def ensure_deploy_meta(
     inferred = infer_model_safety_shapes(training_status["model_state"])
     raw = int(inferred["feature_dim"])
     recipe = infer_feat_recipe(raw, lidar_bins)
-    if not is_zone_safety_train_env(train_env) and recipe == FEAT_RECIPE_ZONE_COMPAT:
-        recipe = FEAT_RECIPE_SAR_V1
     meta = build_deploy_meta(
         train_env=train_env,
         raw_feature_dim=raw,

@@ -76,7 +76,9 @@ def build_sar_ltl_eval_stack(
             deploy_meta.setdefault("train_env", train_env)
             deploy_meta = ensure_sar_v1_indep_lidars(deploy_meta, lidar_bins=16)
 
-        zone_compat = resolve_zone_compat(train_env, zone_compat)
+        zone_compat = resolve_zone_compat(
+            train_env, zone_compat, feat_recipe=deploy_meta.get("feat_recipe"),
+        )
         if zone_compat:
             deploy_meta = apply_zone_compat_deploy_meta(deploy_meta, lidar_bins=16)
 
@@ -86,6 +88,9 @@ def build_sar_ltl_eval_stack(
             deploy_meta = dict(loaded_meta or deploy_meta)
             deploy_meta.setdefault("train_env", train_env)
             deploy_meta = ensure_sar_v1_indep_lidars(deploy_meta, lidar_bins=16)
+            zone_compat = resolve_zone_compat(
+                train_env, zone_compat, feat_recipe=deploy_meta.get("feat_recipe"),
+            )
             if zone_compat:
                 deploy_meta = apply_zone_compat_deploy_meta(deploy_meta, lidar_bins=16)
             attach_model_deploy_fields(model, deploy_meta)
