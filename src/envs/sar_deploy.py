@@ -340,6 +340,7 @@ def print_ma_episode_done_debug(
     avoid: Any = None,
     entr_bldg_obs: bool = False,
     zone_compat: bool = False,
+    strip_walls_avoid_lidar: bool = False,
 ) -> None:
     """Print termination diagnostics when an MA deploy episode ends."""
     task = sar_task(env)
@@ -349,6 +350,11 @@ def print_ma_episode_done_debug(
     entrapped_geom = getattr(task, "entrapped_casualtys", None)
     surface_rescued = list(surface_geom.rescued) if surface_geom is not None else None
     entrapped_rescued = list(entrapped_geom.rescued) if entrapped_geom is not None else None
+
+    # Prefer live wrapper/model flags so debug matches agent features.
+    if hasattr(env, "strip_walls_avoid_lidar"):
+        strip_walls_avoid_lidar = bool(getattr(env, "strip_walls_avoid_lidar"))
+    avoid_skip = {"walls"} if strip_walls_avoid_lidar else None
 
     header = f"[MA done debug] step={step}" if step is not None else "[MA done debug]"
     goal_met = _info_goal_met(info)
@@ -366,6 +372,8 @@ def print_ma_episode_done_debug(
     print(f"  propositions: {info.get('propositions')}")
     print(f"  surface_casualtys.rescued: {surface_rescued}")
     print(f"  entrapped_casualtys.rescued: {entrapped_rescued}")
+    if strip_walls_avoid_lidar:
+        print("  strip_walls_avoid_lidar: True (walls omitted from avoid *features*)")
 
     # --- root-cause probes (wall cost vs lidar, blank all_surface reach) ---
     contacts = collect_gremlin_wall_contacts(task)
@@ -402,6 +410,7 @@ def print_ma_episode_done_debug(
                 agent_idx=agent_idx,
                 num_agents=num_agents,
                 zone_compat=zone_compat,
+                skip_props=avoid_skip,
             )
             print(f"  agent_{agent_idx} reach_lidar: {_fmt_lidar(reach_obs)}")
             print(f"  agent_{agent_idx} avoid_lidar: {_fmt_lidar(avoid_obs)}")

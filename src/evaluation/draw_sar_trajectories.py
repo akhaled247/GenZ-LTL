@@ -207,7 +207,7 @@ def _print_zone_sar_diff_map(*, train_env: str, eval_env: str, zone_compat: bool
         f"  SAR eval ({eval_env}) zone_compat={zone_compat}:\n"
         "    packing = agent(16) | reach | avoid  (no indep buildings/walls slices)\n"
         "    entrapped reach → max(terracotta_buildings_lidar, entrapped lidar)\n"
-        "    walls stripped from avoid *features* by default (Büchi still has walls)\n"
+        "    walls stay in avoid *features* when walls in avoid (use --strip-walls-avoid-lidar to drop)\n"
         "  Zone policy learned: approach reach, flee avoid. If avoid≈goal bearing → flees goal.\n"
         "  Native zones 100% OK does NOT imply Zone→SAR OK (avoid semantics change).\n"
         "  SAR-native (sar_v1): buildings/walls are indep channels; reach entrapped is\n"

@@ -75,7 +75,7 @@ PYTHONPATH=src/ python src/evaluation/simulate_ma_sar.py \
   --formula "(!walls U ((!surface_0 & !surface_1) U all_entrapped)) & (!walls U (F surface_0 & F surface_1))"
 ```
 
-Requires `experiments/rco/PointLtlSafety2-v0/GenZ-LTL/<seed>/status.pth`. `zone_compat` drops always-on buildings/walls lidars, maps entrapped reach/avoid lidar to buildings, and keeps walls only via the avoid channel when the formula includes `walls`.
+Requires `experiments/rco/PointLtlSafety2-v0/GenZ-LTL/<seed>/status.pth`. `zone_compat` drops always-on buildings/walls lidars, maps entrapped reach/avoid lidar to buildings, and feeds walls into the avoid channel when the avoid set includes `walls`.
 SafePO uses the same train→deploy split; see `RISE-Training/rise_training/cmdp/ma_protocol.md`.
 
 Multi-agent **MARL** baselines (e.g. SafePO IPPO on `PointLTL0MASAR2-v0`) are optional comparisons in `RISE-Training`, not the paper protocol.

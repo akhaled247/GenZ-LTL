@@ -126,9 +126,9 @@ def test_pre_process_zone_compat_omits_indep_buildings_and_walls():
     assert feat_dim == 16 + 2 * lidar_dim
     reach_slice = feat[16: 16 + lidar_dim]
     avoid_slice = feat[16 + lidar_dim:]
-    # zone_compat: max(building, entrapped); walls stripped from avoid features by default
+    # zone_compat: max(building, entrapped); walls in avoid → walls lidar in avoid features
     np.testing.assert_allclose(reach_slice, np.maximum(building, entrapped))
-    np.testing.assert_allclose(avoid_slice, np.zeros(lidar_dim, dtype=np.float32))
+    np.testing.assert_allclose(avoid_slice, walls)
 
 
 def test_strip_walls_avoid_lidar_zeros_walls_in_avoid_features():

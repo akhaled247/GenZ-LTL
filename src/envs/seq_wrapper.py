@@ -174,9 +174,11 @@ def pre_process_obs_sar(
         zone_compat: bool = False,
         strip_walls_avoid_lidar: bool | None = None,
 ) -> np.ndarray:
-    # zone_compat: drop walls from avoid *features* (Büchi/WC unchanged) — AVOID≈GOAL fix.
+    # zone_compat = 48-d agent|reach|avoid (no indep buildings/walls). Walls still enter
+    # avoid lidar when ``walls`` is in the avoid set unless strip_walls_avoid_lidar=True
+    # (opt-in AVOID≈GOAL ablation; Büchi/WC unchanged either way).
     if strip_walls_avoid_lidar is None:
-        strip_walls_avoid_lidar = bool(zone_compat)
+        strip_walls_avoid_lidar = False
     original_obs = sar_agent_obs(env, agent_idx)
     lidar_dim = sar_task(env).lidar_conf.num_bins
     num_agents = getattr(sar_task(env), "agent_num", 1)
@@ -354,8 +356,8 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
         super().__init__(env)
         self.entr_bldg_obs = bool(entr_bldg_obs)
         self.zone_compat = bool(zone_compat)
-        # Default: zone_compat strips walls from avoid features (LTL avoid keeps walls).
-        self.strip_walls_avoid_lidar = bool(zone_compat)
+        # Opt-in ablation only; zone_compat keeps walls in avoid features when in avoid set.
+        self.strip_walls_avoid_lidar = False
         self.region_order = get_env_attr(env, 'get_propositions')()
         if "SAR" in env.spec.id:
             self.agent_obs_keys = SAR_AGENT_OBS_KEYS
