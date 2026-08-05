@@ -16,10 +16,16 @@ class NoPathsException(Exception):
 
 
 WALLS_PROP = "walls"
+ANY_WALLS = "any_walls"
+_WALLS_PROPS = frozenset({WALLS_PROP, ANY_WALLS})
+
+
+def _is_walls_prop(name: str) -> bool:
+    return name in _WALLS_PROPS
 
 
 def _is_surface_prop(name: str) -> bool:
-    return name == "all_surface" or name.startswith("surface_")
+    return name == "all_surface" or name == "any_surface" or name.startswith("surface_")
 
 
 def _is_entrapped_prop(name: str) -> bool:
@@ -55,12 +61,14 @@ def _expand_avoid_singles(
     seen: set[str] = set()
     for a in avoid:
         for p in _assignment_true_props(a):
-            if p == WALLS_PROP:
+            if _is_walls_prop(p):
                 continue
             if p not in seen:
                 seen.add(p)
                 cleaned.append(Assignment.single_proposition(p, props).to_frozen())
-    if WALLS_PROP in props:
+    if ANY_WALLS in props:
+        cleaned.append(Assignment.single_proposition(ANY_WALLS, props).to_frozen())
+    elif WALLS_PROP in props:
         cleaned.append(Assignment.single_proposition(WALLS_PROP, props).to_frozen())
     return frozenset(cleaned)
 
@@ -79,7 +87,7 @@ def sanitize_reach_avoid_walls(
     avoid_props = _avoid_true_props(new_avoid)
     reach_props = [
         name for name, truth in reach_assignment
-        if truth and name != WALLS_PROP and name not in avoid_props
+        if truth and not _is_walls_prop(name) and name not in avoid_props
     ]
     if not reach_props:
         return None
@@ -103,7 +111,7 @@ def strip_walls_from_reach_set(
         for name, truth in assignment:
             if (
                 truth
-                and name != WALLS_PROP
+                and not _is_walls_prop(name)
                 and name not in avoid_props
                 and name not in reach_props
             ):
@@ -351,7 +359,7 @@ class ExhaustiveSearchSafety(SequenceSearch):
             for reach in reach_list:
                 true_props = reach.get_true_propositions()
                 # Check conflicts with avoid set (ignore walls co-activation on reach)
-                true_wo_walls = true_props - {WALLS_PROP}
+                true_wo_walls = true_props - _WALLS_PROPS
                 if not true_wo_walls:
                     continue
                 if any(avoid_set <= true_wo_walls for avoid_set in avoid_sets):

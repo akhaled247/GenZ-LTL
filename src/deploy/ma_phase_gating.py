@@ -1,18 +1,31 @@
-"""MA SAR deploy: gate Büchi subgoals to clean entrapped → surface feature phases."""
+"""MA SAR deploy: hierarchical per-agent reach/avoid feature phases."""
 from __future__ import annotations
 
 from typing import Any, FrozenSet
 
 from ltl.logic import Assignment, FrozenAssignment
 
-SURFACE_PROPS = ("surface_0", "surface_1", "all_surface")
-ENTRAPPED_TEAM = "all_entrapped"
 SURFACE_TEAM = "all_surface"
+ENTRAPPED_TEAM = "all_entrapped"
 WALLS_PROP = "walls"
+ANY_WALLS = "any_walls"
 
 
+def should_use_ma_hierarchy(
+    propositions: set[str] | frozenset[str],
+    num_agents: int = 2,
+) -> bool:
+    """True for symmetric team MA missions (v1 hierarchical feature recipe)."""
+    return (
+        num_agents >= 2
+        and ENTRAPPED_TEAM in propositions
+        and SURFACE_TEAM in propositions
+    )
+
+
+# Backwards-compatible alias used by older tests / imports.
 def should_use_ma_phase_gating(propositions: set[str] | frozenset[str]) -> bool:
-    return ENTRAPPED_TEAM in propositions and SURFACE_TEAM in propositions
+    return should_use_ma_hierarchy(propositions, num_agents=2)
 
 
 def _single_prop_assignment(prop: str, propositions: set[str]) -> FrozenAssignment:
@@ -39,9 +52,47 @@ def _all_entrapped_rescued(env: Any) -> bool:
 
 
 def _walls_avoid(propositions: set[str]) -> FrozenSet[FrozenAssignment]:
-    if WALLS_PROP not in propositions:
-        return frozenset()
-    return frozenset({_single_prop_assignment(WALLS_PROP, propositions)})
+    """Prefer ``any_walls`` when present; else ``walls``."""
+    if ANY_WALLS in propositions:
+        return frozenset({_single_prop_assignment(ANY_WALLS, propositions)})
+    if WALLS_PROP in propositions:
+        return frozenset({_single_prop_assignment(WALLS_PROP, propositions)})
+    return frozenset()
+
+
+def hierarchical_reach_avoid_for_agent(
+    env: Any,
+    agent_idx: int,
+    propositions: set[str],
+) -> tuple[FrozenSet[FrozenAssignment], FrozenSet[FrozenAssignment]]:
+    """Per-agent two-phase SAR features for symmetric team formulas.
+
+    Phase A (until all entrapped rescued): reach ``entrapped_i``; avoid ``surface_i`` + walls.
+    Phase B: reach ``surface_i``; avoid walls / ``any_walls``.
+
+    Büchi search / LTL tracking stay on the shared team formula; only policy features
+    are hierarchical so they match SA training (single local reach prop).
+    """
+    props = set(propositions)
+    walls_avoid = _walls_avoid(props)
+    entrapped = f"entrapped_{agent_idx}"
+    surface = f"surface_{agent_idx}"
+    if entrapped not in props or surface not in props:
+        raise ValueError(
+            f"Hierarchical MA features need {entrapped!r} and {surface!r} in alphabet; "
+            f"got {sorted(props)}"
+        )
+
+    if not _all_entrapped_rescued(env):
+        return (
+            frozenset({_single_prop_assignment(entrapped, props)}),
+            frozenset({_single_prop_assignment(surface, props)}) | walls_avoid,
+        )
+
+    return (
+        frozenset({_single_prop_assignment(surface, props)}),
+        walls_avoid,
+    )
 
 
 def gated_reach_avoid_for_features(
@@ -49,33 +100,11 @@ def gated_reach_avoid_for_features(
     reach: FrozenSet[FrozenAssignment],
     avoid: FrozenSet[FrozenAssignment],
     propositions: set[str],
+    *,
+    agent_idx: int = 0,
+    num_agents: int = 1,
 ) -> tuple[FrozenSet[FrozenAssignment], FrozenSet[FrozenAssignment]]:
-    """Replace messy Büchi reach/avoid frozensets with two-phase SAR deploy features.
-
-    Phase A (until all entrapped rescued): reach ``all_entrapped``; avoid all surface props.
-    Phase B: reach ``all_surface`` only; avoid empty (plus ``walls`` when in vocab).
-
-    Büchi search / LTL tracking still uses the original ``sequence``; only policy features
-    are gated so they match SA training (single reach prop, no LDBA label compounds).
-    """
-    if not should_use_ma_phase_gating(propositions):
-        return reach, avoid
-
-    props = set(propositions)
-    surface_avoid = frozenset(
-        _single_prop_assignment(p, props)
-        for p in SURFACE_PROPS
-        if p in props
-    )
-    walls_avoid = _walls_avoid(props)
-
-    if not _all_entrapped_rescued(env):
-        return (
-            frozenset({_single_prop_assignment(ENTRAPPED_TEAM, props)}),
-            surface_avoid | walls_avoid,
-        )
-
-    return (
-        frozenset({_single_prop_assignment(SURFACE_TEAM, props)}),
-        walls_avoid,
-    )
+    """Feature reach/avoid: hierarchical per-agent when team MA; else Büchi passthrough."""
+    if should_use_ma_hierarchy(propositions, num_agents=num_agents):
+        return hierarchical_reach_avoid_for_agent(env, agent_idx, set(propositions))
+    return reach, avoid

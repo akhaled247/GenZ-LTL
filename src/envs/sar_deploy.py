@@ -99,7 +99,8 @@ def ma_episode_violation(
             return True
     if saw_walls:
         return True
-    if "walls" in (info.get("propositions") or []):
+    props = info.get("propositions") or []
+    if "walls" in props or "any_walls" in props:
         return True
     if float(info.get("cost", 0) or 0) > 0:
         return True
@@ -354,7 +355,7 @@ def print_ma_episode_done_debug(
     # Prefer live wrapper/model flags so debug matches agent features.
     if hasattr(env, "strip_walls_avoid_lidar"):
         strip_walls_avoid_lidar = bool(getattr(env, "strip_walls_avoid_lidar"))
-    avoid_skip = {"walls"} if strip_walls_avoid_lidar else None
+    avoid_skip = {"walls", "any_walls"} if strip_walls_avoid_lidar else None
 
     header = f"[MA done debug] step={step}" if step is not None else "[MA done debug]"
     goal_met = _info_goal_met(info)
@@ -394,9 +395,17 @@ def print_ma_episode_done_debug(
         print(f"  avoid set: {avoid}")
         for agent_idx in range(num_agents):
             original_obs = sar_agent_obs(env, agent_idx)
+            if isinstance(reach, dict):
+                reach_i = reach.get(agent_idx, frozenset())
+            else:
+                reach_i = reach or frozenset()
+            if isinstance(avoid, dict):
+                avoid_i = avoid.get(agent_idx, frozenset())
+            else:
+                avoid_i = avoid or frozenset()
             reach_obs = lidar_for_assignments(
                 original_obs,
-                reach or frozenset(),
+                reach_i,
                 lidar_dim,
                 agent_idx=agent_idx,
                 num_agents=num_agents,
@@ -405,7 +414,7 @@ def print_ma_episode_done_debug(
             )
             avoid_obs = lidar_for_assignments(
                 original_obs,
-                avoid or frozenset(),
+                avoid_i,
                 lidar_dim,
                 agent_idx=agent_idx,
                 num_agents=num_agents,

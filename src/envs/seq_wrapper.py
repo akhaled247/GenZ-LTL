@@ -197,7 +197,7 @@ def pre_process_obs_sar(
                 for_reach=entr_bldg_obs,
                 zone_compat=zone_compat,
             ))
-    avoid_skip = {"walls"} if strip_walls_avoid_lidar else set()
+    avoid_skip = {"walls", "any_walls"} if strip_walls_avoid_lidar else set()
     for assignment in avoid:
         for prop in assignment.to_string():
             if prop and prop not in avoid_skip:

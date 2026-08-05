@@ -36,8 +36,8 @@ class MultiAgentSARCoordinator:
         self.sequence = None
         self.current_goal_steps = 0
         self.timeout = float('inf')
-        self.last_reach = None
-        self.last_avoid = None
+        self.last_reach: dict[int, Any] | None = None
+        self.last_avoid: dict[int, Any] | None = None
         dev = device if device is not None else next(model.parameters()).device
         self._forward_agent = Agent(env, model, search, propositions, verbose=verbose, device=dev)
 
@@ -78,30 +78,39 @@ class MultiAgentSARCoordinator:
                 self.current_goal_steps = 0
 
         assert self.sequence is not None
-        reach, avoid = self.sequence[0]
-        reach, avoid = gated_reach_avoid_for_features(
-            self.env, reach, avoid, self.propositions,
-        )
-        # Belt-and-suspenders: never feed walls as a reach lidar target.
-        stripped = strip_walls_from_reach_set(reach, avoid, self.propositions)
-        if stripped is not None:
-            reach, avoid = stripped
-        self.last_reach = reach
-        self.last_avoid = avoid
-        if self.verbose:
-            print(f"Feature reach/avoid: {reach} | {avoid}")
-            reach_names = sorted({p for a in reach for p in a.get_true_propositions()})
-            if "walls" in reach_names:
-                print("ERROR: walls still in feature reach after sanitize — bug")
+        buch_reach, buch_avoid = self.sequence[0]
         # Shallow top-level copy only — features/goal replaced per agent; ldba shared read-only.
         obss = []
+        last_reach: dict[int, Any] = {}
+        last_avoid: dict[int, Any] = {}
         for agent_idx in range(self.num_agents):
+            reach, avoid = gated_reach_avoid_for_features(
+                self.env,
+                buch_reach,
+                buch_avoid,
+                self.propositions,
+                agent_idx=agent_idx,
+                num_agents=self.num_agents,
+            )
+            # Belt-and-suspenders: never feed walls as a reach lidar target.
+            stripped = strip_walls_from_reach_set(reach, avoid, self.propositions)
+            if stripped is not None:
+                reach, avoid = stripped
+            last_reach[agent_idx] = reach
+            last_avoid[agent_idx] = avoid
+            if self.verbose:
+                print(f"Agent {agent_idx} feature reach/avoid: {reach} | {avoid}")
+                reach_names = sorted({p for a in reach for p in a.get_true_propositions()})
+                if "walls" in reach_names or "any_walls" in reach_names:
+                    print("ERROR: walls still in feature reach after sanitize — bug")
             obs_i = dict(obs)
             obs_i["goal"] = self.sequence
             obs_i["features"] = sar_preprocess_for_deploy(
                 self.env, self.model, reach, avoid, agent_idx=agent_idx,
             )
             obss.append(obs_i)
+        self.last_reach = last_reach
+        self.last_avoid = last_avoid
         batched = self._forward_agent.forward(obss, deterministic)
         actions: dict[str, np.ndarray] = {}
         for agent_idx in range(self.num_agents):

@@ -114,7 +114,7 @@ class LDBAWrapper(gymnasium.Wrapper):
     @staticmethod
     def _wall_constraint_hit(info: dict[str, Any], props: set[str]) -> bool:
         """True when WC / wall contact ended (or would end) the step."""
-        if "walls" in props:
+        if "walls" in props or "any_walls" in props:
             return True
         if float(info.get("cost", 0) or 0) > 0:
             return True
