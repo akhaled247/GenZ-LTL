@@ -46,7 +46,7 @@ def test_apply_zone_compat_deploy_meta():
     assert meta["raw_feature_dim"] == 48
 
 
-def test_zone_compat_entrapped_uses_buildings_only():
+def test_zone_compat_entrapped_maxes_building_and_entrapped():
     lidar_dim = 4
     building = np.array([0.9, 0.1, 0.0, 0.0], dtype=np.float64)
     entrapped = np.array([0.2, 0.8, 0.0, 0.0], dtype=np.float64)
@@ -58,7 +58,7 @@ def test_zone_compat_entrapped_uses_buildings_only():
     reach_obs = lidar_for_assignments(
         original_obs, reach, lidar_dim, zone_compat=True,
     )
-    np.testing.assert_allclose(reach_obs, building)
+    np.testing.assert_allclose(reach_obs, np.maximum(building, entrapped))
 
 
 def test_zone_compat_surface_unchanged():
@@ -76,7 +76,8 @@ def test_zone_compat_surface_unchanged():
     np.testing.assert_allclose(reach_obs, surface)
 
 
-def test_zone_compat_walls_in_avoid():
+def test_zone_compat_walls_still_resolvable_when_not_stripped():
+    """Lidar key mapping for walls prop unchanged; strip is feature-pack only."""
     lidar_dim = 4
     walls = np.array([0.0, 0.7, 0.0, 0.0], dtype=np.float64)
     original_obs = {
@@ -88,6 +89,10 @@ def test_zone_compat_walls_in_avoid():
         original_obs, avoid, lidar_dim, zone_compat=True,
     )
     np.testing.assert_allclose(avoid_obs, walls)
+    stripped = lidar_for_assignments(
+        original_obs, avoid, lidar_dim, zone_compat=True, skip_props={"walls"},
+    )
+    np.testing.assert_allclose(stripped, np.zeros(lidar_dim))
 
 
 def test_pre_process_zone_compat_omits_indep_buildings_and_walls():
@@ -121,8 +126,9 @@ def test_pre_process_zone_compat_omits_indep_buildings_and_walls():
     assert feat_dim == 16 + 2 * lidar_dim
     reach_slice = feat[16: 16 + lidar_dim]
     avoid_slice = feat[16 + lidar_dim:]
-    np.testing.assert_allclose(reach_slice, building)
-    np.testing.assert_allclose(avoid_slice, walls)
+    # zone_compat: max(building, entrapped); walls stripped from avoid features by default
+    np.testing.assert_allclose(reach_slice, np.maximum(building, entrapped))
+    np.testing.assert_allclose(avoid_slice, np.zeros(lidar_dim, dtype=np.float32))
 
 
 def test_strip_walls_avoid_lidar_zeros_walls_in_avoid_features():

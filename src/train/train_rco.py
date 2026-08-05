@@ -306,8 +306,8 @@ def parse_arguments() -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=False,
         dest='zone_compat',
-        help='48-d zones-like SAR features (agent|reach|avoid); always max(building,entrapped); '
-             'use with walls-always-in-avoid curriculum on L1 WC.',
+        help='48-d zones-like SAR features (agent|reach|avoid); max(building,entrapped) on '
+             'entrapped reach; strips walls from avoid *features* (Büchi/WC still use walls).',
     )
     args = parser.parse_args()
     args.rco.cost_clipping = args.cost_clipping

@@ -44,7 +44,8 @@ class LDBAWrapper(gymnasium.Wrapper):
         super().__init__(env)
         self.entr_bldg_obs = bool(entr_bldg_obs)
         self.zone_compat = bool(zone_compat)
-        self.strip_walls_avoid_lidar = False
+        # Default: zone_compat strips walls from avoid features (LTL avoid keeps walls).
+        self.strip_walls_avoid_lidar = bool(zone_compat)
         
         if "PointLtlSafety" in env.spec.id:
             self.observation_space = spaces.Dict({

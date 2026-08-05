@@ -63,18 +63,15 @@ def lidar_keys_for_prop(
         resolve_casualty_lidar_keys,
         resolve_casualty_lidar_keys_for_observer,
     )
-    if zone_compat and is_entrapped_prop(prop):
-        building_key = buildings_lidar_key(agent_idx)
-        if available_keys is None or building_key in available_keys:
-            return [building_key]
-        return [building_key]
     if available_keys is not None:
         keys = resolve_casualty_lidar_keys_for_observer(
             prop, observer_idx=agent_idx, num_agents=num_agents, available_keys=available_keys,
         )
     else:
         keys = resolve_casualty_lidar_keys(prop, agent_idx=agent_idx, num_agents=num_agents)
-    if for_reach and is_entrapped_prop(prop):
+    # zone_compat + entr_bldg reach: max(building, entrapped) — not buildings-only replace.
+    pool_buildings = is_entrapped_prop(prop) and (for_reach or zone_compat)
+    if pool_buildings:
         building_key = buildings_lidar_key(agent_idx)
         if available_keys is None or building_key in available_keys:
             if building_key not in keys:
@@ -175,8 +172,11 @@ def pre_process_obs_sar(
         allow_legacy_padding: bool = False,
         entr_bldg_obs: bool = False,
         zone_compat: bool = False,
-        strip_walls_avoid_lidar: bool = False,
+        strip_walls_avoid_lidar: bool | None = None,
 ) -> np.ndarray:
+    # zone_compat: drop walls from avoid *features* (Büchi/WC unchanged) — AVOID≈GOAL fix.
+    if strip_walls_avoid_lidar is None:
+        strip_walls_avoid_lidar = bool(zone_compat)
     original_obs = sar_agent_obs(env, agent_idx)
     lidar_dim = sar_task(env).lidar_conf.num_bins
     num_agents = getattr(sar_task(env), "agent_num", 1)
@@ -354,7 +354,8 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
         super().__init__(env)
         self.entr_bldg_obs = bool(entr_bldg_obs)
         self.zone_compat = bool(zone_compat)
-        self.strip_walls_avoid_lidar = False
+        # Default: zone_compat strips walls from avoid features (LTL avoid keeps walls).
+        self.strip_walls_avoid_lidar = bool(zone_compat)
         self.region_order = get_env_attr(env, 'get_propositions')()
         if "SAR" in env.spec.id:
             self.agent_obs_keys = SAR_AGENT_OBS_KEYS
