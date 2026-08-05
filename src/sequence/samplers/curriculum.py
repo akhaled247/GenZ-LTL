@@ -96,11 +96,7 @@ class EnumerateCurriculumStageZones(CurriculumStage):
         # ``walls`` is an LTL alphabet symbol for MA eval / avoid, not a reach target.
         reach_props = [p for p in propositions if p != "walls"]
         for reach in combinations(reach_props, 1):
-            # Exclude reach elements; walls never optional — always union into avoid when present.
-            remaining = [
-                p for p in propositions if p not in reach and p != "walls"
-            ]
-
+            remaining = [p for p in propositions if p not in reach]
             for a_size in range(len(remaining) + 1):
                 for avoid in combinations(remaining, a_size):
                     reach_assignments = frozenset([

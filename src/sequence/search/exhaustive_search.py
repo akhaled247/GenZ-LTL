@@ -75,7 +75,7 @@ def sanitize_reach_avoid_walls(
     Also drops any reach prop that appears in avoid (e.g. surface in both).
     """
     props = set(propositions) if not isinstance(propositions, set) else propositions
-    new_avoid = _expand_avoid_singles(avoid, props)
+    new_avoid = avoid # _expand_avoid_singles(avoid, props)
     avoid_props = _avoid_true_props(new_avoid)
     reach_props = [
         name for name, truth in reach_assignment
@@ -96,7 +96,7 @@ def strip_walls_from_reach_set(
 ) -> tuple[frozenset[FrozenAssignment], frozenset[FrozenAssignment]] | None:
     """Sanitize a frozenset of reach assignments (one Büchi stage)."""
     props = set(propositions) if not isinstance(propositions, set) else propositions
-    new_avoid = _expand_avoid_singles(avoid, props)
+    new_avoid = avoid #_expand_avoid_singles(avoid, props)
     avoid_props = _avoid_true_props(new_avoid)
     reach_props: list[str] = []
     for assignment in reach:
