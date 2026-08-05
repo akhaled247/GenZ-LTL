@@ -41,6 +41,7 @@ class Trainer:
     def train(self, log_csv: bool = True, log_wandb: bool = False):
         apply_oom_guardrails(
             self.args.experiment,
+            algo_config=self.args.rco,
             log=lambda msg: self.text_logger.important_info(msg),
         )
         training_status, resuming = self.get_training_status()

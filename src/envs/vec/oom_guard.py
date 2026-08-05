@@ -23,6 +23,28 @@ class OomGuardDecision:
     reason: str
 
 
+def compensate_steps_per_process(
+    requested_num_procs: int,
+    clamped_num_procs: int,
+    steps_per_process: int,
+) -> int:
+    """Keep frames/update ≥ ``steps_per_process * requested`` after a proc clamp.
+
+    Rollout size is ``steps_per_process * num_procs``. When OOM guard reduces
+    ``num_procs``, raise ``steps_per_process`` (ceil) so each PPO/RCO update still
+    sees ~the same number of timesteps.
+    """
+    if (
+        requested_num_procs < 1
+        or clamped_num_procs < 1
+        or steps_per_process < 1
+        or clamped_num_procs >= requested_num_procs
+    ):
+        return steps_per_process
+    target = steps_per_process * requested_num_procs
+    return (target + clamped_num_procs - 1) // clamped_num_procs
+
+
 def available_ram_bytes() -> int | None:
     """Best-effort MemAvailable (Linux) / GlobalMemoryStatusEx (Windows)."""
     try:
@@ -248,21 +270,39 @@ def safe_num_eval_workers(
 def apply_oom_guardrails(
     experiment,
     *,
+    algo_config=None,
     log: Callable[[str], None] | None = None,
 ) -> OomGuardDecision:
-    """Mutate ``experiment.num_procs`` in place; raise on refused configs."""
+    """Mutate ``experiment.num_procs`` (and optionally algo ``steps_per_process``).
+
+    If procs are clamped, scale ``algo_config.steps_per_process`` so
+    frames/update stay ≈ ``original_spp * requested_num_procs``.
+    """
     log = log or (lambda msg: warnings.warn(msg, stacklevel=2))
+    requested = int(experiment.num_procs)
     decision = safe_num_procs(
-        int(experiment.num_procs),
+        requested,
         env_name=str(getattr(experiment, "env", "")),
         vec_backend=str(getattr(experiment, "vec_backend", "list")),
         parallel=bool(getattr(experiment, "parallel", False)),
     )
+    log(f"[oom_guard] {decision.reason}")
     if decision.clamped:
-        log(f"[oom_guard] {decision.reason}")
         experiment.num_procs = decision.num_procs
-    else:
-        log(f"[oom_guard] {decision.reason}")
+        if algo_config is not None and hasattr(algo_config, "steps_per_process"):
+            old_spp = int(algo_config.steps_per_process)
+            new_spp = compensate_steps_per_process(
+                requested, decision.num_procs, old_spp
+            )
+            if new_spp != old_spp:
+                algo_config.steps_per_process = new_spp
+                old_rollout = old_spp * requested
+                new_rollout = new_spp * decision.num_procs
+                log(
+                    f"[oom_guard] Preserved rollout: steps_per_process "
+                    f"{old_spp} → {new_spp} "
+                    f"(frames/update {old_rollout} → {new_rollout})"
+                )
     return decision
 
 
