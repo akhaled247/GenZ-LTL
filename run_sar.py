@@ -19,7 +19,9 @@ class Args:
   num_seeds: int | None = None  # if set, runs seeds 0 .. num_seeds-1
   device: str = 'cuda:1'
   num_steps: int = 10_000_000
-  num_procs: int = 24
+  # Slow / original path: SyncEnv list, one env. Opt into speed with
+  # --vec_backend safety_async --num_procs N --fast_action_bridge.
+  num_procs: int = 1
   steps_per_process: int = 4096
   batch_size: int = 2048
   lr: float = 0.0003
@@ -32,9 +34,9 @@ class Args:
   log_wandb: bool = False
   save: bool = True
   parallel: bool = False
-  vec_backend: str = 'safety_async'
+  vec_backend: str = 'list'
   sar_env_backend: str = 'specrl'
-  fast_action_bridge: bool = True
+  fast_action_bridge: bool = False
 
 
 def _resolve_seeds(args: Args) -> list[int]:
