@@ -232,8 +232,55 @@ def nearest_interior_wall_debug(task: Any, agent_idx: int) -> dict[str, Any] | N
     return best
 
 
+def _geom_name(task: Any, geom_id: int | None) -> str | None:
+    if geom_id is None:
+        return None
+    model = getattr(task, "model", None)
+    if model is None:
+        return None
+    try:
+        return str(model.geom(int(geom_id)).name)
+    except Exception:  # noqa: BLE001 — debug only
+        return None
+
+
+def first_hit_along_agent_to_target(
+    task: Any,
+    agent_idx: int,
+    target_pos: np.ndarray,
+) -> dict[str, Any] | None:
+    """First lidar-observable geom on agent→target ray (LOS failure probe)."""
+    if not hasattr(task, "_lidar_ray_first_observable_geom"):
+        return None
+    agent = getattr(task, "agent", None)
+    if agent is None:
+        return None
+    agent_pos = np.asarray(agent.get_agent_pos(agent_idx), dtype=float)
+    target = np.asarray(target_pos, dtype=float)
+    if target.shape == (2,):
+        target = np.concatenate([target, [float(agent_pos[2])]])
+    vec = target - agent_pos
+    dist = float(np.linalg.norm(vec))
+    if dist < 1e-9:
+        return {"geom_id": None, "geom_name": None, "hit_dist": 0.0, "wall_class": None}
+    vec = vec / dist
+    try:
+        hit_geom, hit_dist = task._lidar_ray_first_observable_geom(
+            agent_idx, agent_pos, vec, dist + 1e-4,
+        )
+    except Exception:  # noqa: BLE001 — debug only
+        return None
+    name = _geom_name(task, hit_geom)
+    return {
+        "geom_id": hit_geom,
+        "geom_name": name,
+        "hit_dist": float(hit_dist) if hit_dist is not None else None,
+        "wall_class": classify_wall_geom_name(name) if name else None,
+    }
+
+
 def remaining_surface_debug(task: Any, agent_idx: int) -> list[dict[str, Any]]:
-    """Per unrescued surface casualty: dist, LOS, expected lidar."""
+    """Per unrescued surface casualty: dist, LOS, expected lidar, live obs, sticky."""
     surface = getattr(task, "surface_casualtys", None)
     if surface is None:
         return []
@@ -243,19 +290,28 @@ def remaining_surface_debug(task: Any, agent_idx: int) -> list[dict[str, Any]]:
         return []
     agent_xy = np.asarray(agent.get_agent_pos(agent_idx), dtype=float)[:2]
     exp_gain = float(getattr(getattr(task, "lidar_conf", None), "exp_gain", 0.5) or 0.5)
+    last_seen = getattr(task, "_surface_last_seen", {}).get(agent_idx, {})
+    sticky_active = getattr(task, "_surface_sticky_active", {}).get(agent_idx, set())
     rows: list[dict[str, Any]] = []
     for row, is_rescued in enumerate(rescued):
         if is_rescued:
-            continue
+            # Still report on rescue frame when lidar-skip lag keeps them visible.
+            skip = getattr(task, "_casualty_lidar_skip_rows", {}).get(surface.name, frozenset())
+            if row in skip:
+                continue
         pos = np.asarray(surface.pos[row], dtype=float)
         dist = float(np.linalg.norm(agent_xy - pos[:2]))
         los = None
+        first_hit = None
         if hasattr(task, "_lidar_line_of_sight"):
             try:
                 target = pos if pos.shape[0] >= 3 else np.r_[pos[:2], 0.0]
                 los = bool(task._lidar_line_of_sight(agent_idx, target, surface, row))
+                if not los:
+                    first_hit = first_hit_along_agent_to_target(task, agent_idx, target)
             except Exception:  # noqa: BLE001 — debug only
                 los = None
+        seen_xy = last_seen.get(row)
         rows.append(
             {
                 "row": row,
@@ -263,6 +319,12 @@ def remaining_surface_debug(task: Any, agent_idx: int) -> list[dict[str, Any]]:
                 "expected_lidar": expected_pseudo_lidar(dist, exp_gain),
                 "los": los,
                 "xy": pos[:2].tolist(),
+                "sticky": row in sticky_active,
+                "last_seen_xy": (
+                    np.asarray(seen_xy, dtype=float)[:2].tolist() if seen_xy is not None else None
+                ),
+                "first_hit": first_hit,
+                "rescued_live": bool(is_rescued),
             }
         )
     return rows
@@ -343,6 +405,14 @@ def print_ma_episode_done_debug(
             )
             print(f"  agent_{agent_idx} reach_lidar: {_fmt_lidar(reach_obs)}")
             print(f"  agent_{agent_idx} avoid_lidar: {_fmt_lidar(avoid_obs)}")
+            surf_key = f"surface_casualtys_lidar_{agent_idx}"
+            if surf_key in original_obs:
+                surf_arr = np.asarray(original_obs[surf_key], dtype=float)
+                peak_bin = int(np.argmax(surf_arr)) if surf_arr.size else -1
+                print(
+                    f"  agent_{agent_idx} surface_lidar: "
+                    f"{_fmt_lidar(surf_arr)} peak_bin={peak_bin}"
+                )
             walls_key = walls_lidar_key(agent_idx)
             walls_max = None
             if walls_key in original_obs:
@@ -367,8 +437,19 @@ def print_ma_episode_done_debug(
                     f"{'MISMATCH' if mismatch else 'ok'}"
                 )
             for row in remaining_surface_debug(task, agent_idx):
+                hit = row.get("first_hit") or {}
+                hit_bits = ""
+                if row.get("los") is False and hit:
+                    hit_bits = (
+                        f" first_hit={hit.get('geom_name')} "
+                        f"[{hit.get('wall_class')}] "
+                        f"hit_dist={hit.get('hit_dist')}"
+                    )
                 print(
                     f"  agent_{agent_idx} remaining surface_{row['row']}: "
                     f"dist={row['dist']:.3f} expected_lidar={row['expected_lidar']:.3f} "
-                    f"los={row['los']} xy={row['xy']}"
+                    f"los={row['los']} sticky={row['sticky']} "
+                    f"last_seen_xy={row['last_seen_xy']} "
+                    f"rescued_live={row['rescued_live']} xy={row['xy']}"
+                    f"{hit_bits}"
                 )
