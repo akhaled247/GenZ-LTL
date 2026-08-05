@@ -95,11 +95,6 @@ class EnumerateCurriculumStageZones(CurriculumStage):
         self._tasks, self._sample_prob = [], []
         # ``walls`` is an LTL alphabet symbol for MA eval / avoid, not a reach target.
         reach_props = [p for p in propositions if p != "walls"]
-        force_walls_avoid = "walls" in propositions
-        walls_assignment = (
-            Assignment.single_proposition("walls", propositions).to_frozen()
-            if force_walls_avoid else None
-        )
         for reach in combinations(reach_props, 1):
             # Exclude reach elements; walls never optional — always union into avoid when present.
             remaining = [
@@ -114,8 +109,6 @@ class EnumerateCurriculumStageZones(CurriculumStage):
                     avoid_list = [
                         Assignment.single_proposition(p, propositions).to_frozen() for p in avoid
                     ]
-                    if walls_assignment is not None:
-                        avoid_list.append(walls_assignment)
                     avoid_assignments = frozenset(avoid_list)
                     self._tasks.append(LDBASequence([(reach_assignments, avoid_assignments)]))
                     self._sample_prob.append(1)
