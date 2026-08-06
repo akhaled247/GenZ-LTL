@@ -5,8 +5,9 @@ import pandas as pd
 from tqdm import tqdm
 
 from evaluation.simulate import simulate
-from evaluation.simulate_ma_sar import simulate_ma_sar, TRAIN_ENV as MASAR_TRAIN_ENV
 import multiprocessing as mp
+
+MASAR_TRAIN_ENV = "PointLTL0MASAR1WC-v0"
 
 
 env_to_tasks = {
@@ -142,6 +143,15 @@ def eval_task(simulate_args):
 
 
 def eval_ma_task(simulate_args):
+    import sys
+    from pathlib import Path
+
+    _RISE = Path(__file__).resolve().parents[3]
+    sys.path.insert(0, str(_RISE / "RISE-Training"))
+    from rise_training.paths import ensure_genz_paths
+    ensure_genz_paths()
+    from rise_training.genz_deploy.ma_rollout import simulate_ma_sar
+
     eval_env, train_env, gamma, exp, seed, num_episodes, formula, render, deterministic = simulate_args
     return (
         simulate_ma_sar(

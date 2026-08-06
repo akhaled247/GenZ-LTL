@@ -1,4 +1,4 @@
- 
+
 <h1 align="center">
 <br>
 One Subgoal at a Time: Zero-Shot Generalization to Arbitrary Linear Temporal Logic Requirements in Multi-Task Reinforcement Learning
@@ -51,35 +51,6 @@ PYTHONPATH=src/ python src/evaluation/eval_test_tasks_finite.py --exp GenZ-LTL -
 PYTHONPATH=src/ python src/evaluation/eval_test_tasks_infinite.py --exp GenZ-LTL --env <env_name> --exp GenZ-LTL --seed 1
 ```
 The results will be stored in the `results_finite` and `results_infinite` directories, respectively.
-
-### SAR (search-and-rescue) — paper protocol
-
-Train a **single-agent** RCO policy on `MASAR1WC`, then deploy the **shared** checkpoint on `MASAR2WC` with a central Büchi coordinator (paper §5.3). Inter-agent collision is **not** modeled in the cost/termination stack.
-
-```bash
-# Train (solo)
-PYTHONPATH=src/ python run_sar.py --script train_rco --name GenZ-SAR \
-  --env PointLTL0MASAR1WC-v0 --curriculum PointLTL0MASAR1WC-v0 \
-  --model_config zones_safety --num_seeds 100
-
-# Single-agent LTL eval (MASAR1WC checkpoint)
-PYTHONPATH=src/ python src/evaluation/simulate.py --env PointLTL0MASAR1WC-v0 --exp GenZ-SAR --seed 0 --formula "(!surface_0 U entrapped_0) & F surface_0"
-
-# Two-agent deploy eval (shared MASAR1WC checkpoint + coordinator on MASAR2WC)
-PYTHONPATH=src/ python src/evaluation/simulate_ma_sar.py --exp GenZ-SAR --seed 0 \
-  --formula "(!(any_walls | any_surface) U all_entrapped) & (!any_walls U all_surface)"
-
-# Zone pretrained → SAR transfer (48-d zone_compat features; experimental)
-PYTHONPATH=src/ python src/evaluation/simulate_ma_sar.py \
-  --train_env PointLtlSafety2-v0 --eval_env PointLTL0MASAR2WC-v0 \
-  --exp GenZ-LTL --seed 1 --zone-compat \
-  --formula "(!(any_walls | any_surface) U all_entrapped) & (!any_walls U all_surface)"
-```
-
-Requires `experiments/rco/PointLtlSafety2-v0/GenZ-LTL/<seed>/status.pth`. `zone_compat` drops always-on buildings/walls lidars, maps entrapped reach/avoid lidar to buildings, and feeds walls into the avoid channel when the avoid set includes `walls` / `any_walls`.
-SafePO uses the same train→deploy split; see `RISE-Training/rise_training/cmdp/ma_protocol.md`.
-
-Multi-agent **MARL** baselines (e.g. SafePO IPPO on `PointLTL0MASAR2-v0`) are optional comparisons in `RISE-Training`, not the paper protocol.
 
 ## Visualizations
 We present visualization results of the policy learned by GenZ-LTL in the Zone environment. The method consistently achieves the desired behavior under both complex finite-horizon and infinite-horizon specifications.

@@ -31,7 +31,6 @@ def infer_model_safety_shapes(
         state_dict: dict[str, Any],
         *,
         num_propositions: int | None = None,
-        use_subgoal_one_hot: bool = False,
 ) -> dict[str, Any]:
     """Reconstruct safety-model tensor shapes saved in a training checkpoint."""
     actor_in = int(state_dict["actor.enc.0.weight"].shape[1])
@@ -42,8 +41,6 @@ def infer_model_safety_shapes(
         if f"actor.enc.{i}.weight" in state_dict
     ]
 
-    subgoal_dim = 2 * num_propositions if use_subgoal_one_hot and num_propositions else 0
-
     env_net_layers: list[int] | None = None
     feat_dim = actor_in
     use_env_net = False
@@ -52,13 +49,13 @@ def infer_model_safety_shapes(
         feat_dim = env_linears[0][1]
         env_net_layers = [out for out, _in in env_linears]
         env_net_out = env_linears[-1][0]
-        use_env_net = env_net_out + subgoal_dim == actor_in
+        use_env_net = env_net_out == actor_in
 
     embedding_dim = actor_in
     if use_env_net:
         feature_dim = feat_dim
     else:
-        feature_dim = actor_in - subgoal_dim
+        feature_dim = actor_in
 
     return {
         "feat_dim": feat_dim if use_env_net else feature_dim,
@@ -68,7 +65,6 @@ def infer_model_safety_shapes(
         "use_env_net": use_env_net,
         "action_dim": action_dim,
         "actor_hidden": actor_hidden,
-        "subgoal_dim": subgoal_dim,
     }
 
 
@@ -147,13 +143,11 @@ class ModelSafety(Model):
                  critic: nn.Module,
                  cost_critic: nn.Module,
                  lagrangian_net: nn.Module,
-                 env_net: Optional[nn.Module],
-                 use_subgoal_one_hot: bool = False,):
+                 env_net: Optional[nn.Module],):
         
         super().__init__(actor, critic, None, env_net)
         self.cost_critic = cost_critic
         self.lagrangian_net = lagrangian_net
-        self.use_subgoal_one_hot = use_subgoal_one_hot
         
     def forward(self, obs, collect: bool = True):
         embedding = self.compute_embedding(obs)
@@ -167,35 +161,26 @@ class ModelSafety(Model):
         return dist, value, cost_value, lagrangian
 
     def compute_embedding(self, obs):
-        env_embedding = self.env_net(obs.features) if self.env_net is not None else obs.features
-        if self.use_subgoal_one_hot:
-            env_embedding = torch.cat([env_embedding, obs.current_subgoal], dim=1)
-        return env_embedding
+        return self.env_net(obs.features) if self.env_net is not None else obs.features
 
 def build_model_safety(
         env: gymnasium.Env,
         training_status: dict[str, Any],
         model_config: ModelSafetyConfig,
         deploy_meta: dict[str, Any] | None = None,
-        use_subgoal_one_hot: bool = False,
         num_propositions: int | None = None,
 ) -> ModelSafety:
     state_dict = training_status.get("model_state")
-    if deploy_meta is not None:
-        use_subgoal_one_hot = bool(deploy_meta.get("use_subgoal_one_hot", use_subgoal_one_hot))
-        if deploy_meta.get("num_propositions") is not None:
-            num_propositions = int(deploy_meta["num_propositions"])
+    if deploy_meta is not None and deploy_meta.get("num_propositions") is not None:
+        num_propositions = int(deploy_meta["num_propositions"])
 
     if num_propositions is None and hasattr(env, "get_propositions"):
         num_propositions = len(env.get_propositions())
-
-    subgoal_dim = 2 * num_propositions if use_subgoal_one_hot and num_propositions else 0
 
     inferred = (
         infer_model_safety_shapes(
             state_dict,
             num_propositions=num_propositions,
-            use_subgoal_one_hot=use_subgoal_one_hot,
         )
         if state_dict
         else None
@@ -218,14 +203,14 @@ def build_model_safety(
         raw_feature_dim = int(env.observation_space['features'].shape[0])
         use_env_net_meta = model_config.env_net is not None
         actor_input_dim = (
-            (model_config.env_net.build((raw_feature_dim,)).embedding_size + subgoal_dim)
+            model_config.env_net.build((raw_feature_dim,)).embedding_size
             if model_config.env_net is not None and use_env_net_meta
-            else raw_feature_dim + subgoal_dim
+            else raw_feature_dim
         )
 
     if inferred is not None:
         obs_shape = (inferred["feat_dim"],) if inferred.get("use_env_net") else (raw_feature_dim,)
-        env_embedding_dim = inferred["embedding_dim"] - subgoal_dim
+        env_embedding_dim = inferred["embedding_dim"]
         action_dim = inferred["action_dim"]
         actor_hidden = inferred["actor_hidden"] or list(model_config.actor.layers)
     else:
@@ -241,7 +226,7 @@ def build_model_safety(
         )
         actor_hidden = list(model_config.actor.layers)
 
-    actor_input_dim = env_embedding_dim + subgoal_dim
+    actor_input_dim = env_embedding_dim
 
     env_net = None
     use_env_net = inferred.get("use_env_net", True) if inferred is not None else use_env_net_meta
@@ -255,9 +240,9 @@ def build_model_safety(
         else:
             env_net = model_config.env_net.build(obs_shape)
         env_embedding_dim = env_net.embedding_size
-        actor_input_dim = env_embedding_dim + subgoal_dim
+        actor_input_dim = env_embedding_dim
     elif inferred is not None:
-        env_embedding_dim = inferred["embedding_dim"] - subgoal_dim
+        env_embedding_dim = inferred["embedding_dim"]
 
     if inferred is not None:
         use_discrete = "actor.mu.0.weight" not in state_dict
@@ -294,7 +279,6 @@ def build_model_safety(
 
     model_safety = ModelSafety(
         actor, critic, cost_critic, lagrangian_net, env_net,
-        use_subgoal_one_hot=use_subgoal_one_hot,
     )
 
     if state_dict is not None:
@@ -306,8 +290,7 @@ def build_model_safety(
         model_safety.load_state_dict(filtered, strict=use_env_net)
     model_safety.raw_feature_dim = raw_feature_dim
     model_safety.input_feat_dim = raw_feature_dim  # legacy alias for MA eval scripts
-    model_safety.use_subgoal_one_hot = use_subgoal_one_hot
-    from deploy.feature_recipe import infer_feat_recipe
+    from envs.sar_features import infer_feat_recipe
     from envs.seq_wrapper import sar_task
 
     lidar_bins = sar_task(env).lidar_conf.num_bins

@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 import preprocessing
-from deploy.feature_recipe import resolve_feat_shape, sar_preprocess_for_deploy
+from envs.sar_features import resolve_feat_shape, sar_preprocess_for_deploy
 from envs.seq_wrapper import sar_task
 from model.model import Model
 from sequence.search import SequenceSearch

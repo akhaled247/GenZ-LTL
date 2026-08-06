@@ -61,7 +61,6 @@ def build_deploy_meta(
     eval_env: str = MA_EVAL_ENV_DEFAULT,
     ma_eval_formula: str = MA_EVAL_FORMULA_DEFAULT,
     feat_recipe: str = FEAT_RECIPE_SAR_V1,
-    use_subgoal_one_hot: bool = False,
     entr_bldg_obs: bool = False,
     num_propositions: int | None = None,
 ) -> dict[str, Any]:
@@ -73,7 +72,6 @@ def build_deploy_meta(
         "use_env_net": bool(use_env_net),
         "feat_recipe": feat_recipe,
         "ma_eval_formula": ma_eval_formula,
-        "use_subgoal_one_hot": bool(use_subgoal_one_hot),
         "entr_bldg_obs": bool(entr_bldg_obs),
     }
     if num_propositions is not None:

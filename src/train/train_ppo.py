@@ -25,7 +25,6 @@ from utils.logging.multi_logger import MultiLogger
 from utils.logging.text_logger import TextLogger
 from utils.logging.wandb_logger import WandbLogger
 from utils.model_store import ModelStore
-from envs.vec.oom_guard import apply_oom_guardrails
 from config import *
 
 
@@ -36,11 +35,6 @@ class Trainer:
         self.model_store = ModelStore.from_config(args)
 
     def train(self, log_csv: bool = True, log_wandb: bool = False):
-        apply_oom_guardrails(
-            self.args.experiment,
-            algo_config=self.args.ppo,
-            log=lambda msg: self.text_logger.important_info(msg),
-        )
         training_status, resuming = self.get_training_status()
         envs = self.make_envs(training_status["curriculum_stage"])
         if resuming:
@@ -52,16 +46,10 @@ class Trainer:
         model = build_model(envs[0], training_status, model_configs[self.args.model_config])
         model.to(self.args.experiment.device)
         print(model.ltl_net)
-        async_kwargs = None
-        if self.args.experiment.vec_backend == "safety_async":
-            async_kwargs = self.async_factory_kwargs(training_status["curriculum_stage"])
         algo = torch_ac.PPO(
             envs, model, self.args.experiment.device, self.args.ppo,
             preprocess_obss=preprocessing.preprocess_obss,
             parallel=self.args.experiment.parallel,
-            vec_backend=self.args.experiment.vec_backend,
-            fast_action_bridge=self.args.experiment.fast_action_bridge,
-            async_factory_kwargs=async_kwargs,
         )
         if "optimizer_state" in training_status:
             algo.optimizer.load_state_dict(training_status["optimizer_state"])
@@ -74,8 +62,7 @@ class Trainer:
         )
         self.text_logger.info(
             f"Rollout: steps_per_process={self.args.ppo.steps_per_process} × "
-            f"num_procs={self.args.experiment.num_procs} = {rollout} frames/update "
-            f"(vec_backend={self.args.experiment.vec_backend})"
+            f"num_procs={self.args.experiment.num_procs} = {rollout} frames/update"
         )
         self.text_logger.info(f'Num parameters: {torch_utils.get_number_of_params(model)}')
         num_steps = training_status["num_steps"]
@@ -138,32 +125,10 @@ class Trainer:
             max_steps=2500
         )
 
-    def async_factory_kwargs(self, curriculum_stage: int) -> dict:
-        return {
-            "n_envs": self.args.experiment.num_procs,
-            "env_name": self.args.experiment.env,
-            "curriculum_name": self.args.curriculum,
-            "curriculum_stage": curriculum_stage,
-            "seed": self.args.experiment.seed,
-            "max_steps": 2500,
-            "sar_env_backend": self.args.experiment.sar_env_backend,
-            "safety": False,
-            "sequence": True,
-        }
-
     def make_envs(self, curriculum_stage: int) -> list[gymnasium.Env]:
         utils.set_seed(self.args.experiment.seed)
-        if self.args.experiment.vec_backend == "safety_async":
-            env = self.make_probe_env(curriculum_stage)
-            seed_offset = 100 * self.args.experiment.seed
-            env.reset(seed=seed_offset)
-            self.text_logger.info(
-                f"Async vec backend: probe env on main; {self.args.experiment.num_procs} workers in subprocesses."
-            )
-            return [env]
-
         envs = []
-        for i in range(self.args.experiment.num_procs):
+        for _ in range(self.args.experiment.num_procs):
             envs.append(self.make_probe_env(curriculum_stage))
         seed_offset = 100 * self.args.experiment.seed
         seeds = [seed_offset + i for i in range(self.args.experiment.num_procs)]

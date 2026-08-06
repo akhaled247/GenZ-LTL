@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 
-from deploy.feature_recipe import ensure_deploy_meta
+from envs.sar_features import ensure_deploy_meta
 from envs import make_env_safety
 from envs.seq_wrapper import sar_task
 from ltl import FixedSampler

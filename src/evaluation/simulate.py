@@ -4,12 +4,11 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from envs import make_env, make_env_safety
+from envs import make_env
 from envs.env_utils import is_safety_model_env
 from ltl import FixedSampler
-from model.model import build_model, build_model_safety
+from model.model import build_model
 from config import model_configs
-from deploy.eval_stack import build_sar_ltl_eval_stack
 from sequence.search import ExhaustiveSearch, ExhaustiveSearchSafety, NoPathsException
 from utils.model_store import ModelStore
 from utils.deploy_meta import MA_EVAL_FORMULA_DEFAULT
@@ -69,6 +68,15 @@ def simulate(
     sampler = FixedSampler.partial(formula)
     use_safety = is_safety_model_env(train_env) or is_safety_model_env(env_name)
     if use_safety:
+        import sys
+        from pathlib import Path
+
+        _RISE = Path(__file__).resolve().parents[3]
+        sys.path.insert(0, str(_RISE / "RISE-Training"))
+        from rise_training.paths import ensure_genz_paths
+        ensure_genz_paths()
+        from rise_training.genz_deploy.eval_stack import build_sar_ltl_eval_stack
+
         env, model, search, props, _algo = build_sar_ltl_eval_stack(
             train_env, exp, seed, formula,
             eval_env=env_name,

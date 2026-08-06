@@ -3,21 +3,18 @@ from collections import defaultdict
 
 import torch
 
-from torch_ac.utils import DictList
+from torch_ac.utils import DictList, ParallelEnv
+from torch_ac.utils.sync_env import SyncEnv
 
 import numpy as np
 from tqdm import trange
-
-from envs.vec.genz_env_runner import build_env_runner
-from torch_ac.utils.action_bridge import make_action_bridge
 
 
 class BaseAlgo(ABC):
     """The base class for RL algorithms."""
 
     def __init__(self, envs, model, device, num_steps_per_proc, discount, lr, gae_lambda, entropy_coef,
-                 value_loss_coef, max_grad_norm, preprocess_obss, recurrence=1, parallel=False,
-                 vec_backend="list", fast_action_bridge=False, async_factory_kwargs=None):
+                 value_loss_coef, max_grad_norm, preprocess_obss, recurrence=1, parallel=False):
         """
         Initializes a `BaseAlgo` instance.
 
@@ -55,7 +52,7 @@ class BaseAlgo(ABC):
         # Store parameters
 
         self.propositions = envs[0].get_propositions()
-        self.env = build_env_runner(envs, parallel, vec_backend, async_factory_kwargs)
+        self.env = ParallelEnv(envs) if parallel else SyncEnv(envs)
         self.model = model
         self.device = device
         self.num_steps_per_proc = num_steps_per_proc
@@ -81,15 +78,8 @@ class BaseAlgo(ABC):
 
         # Store helpers values
 
-        if vec_backend == "safety_async":
-            async_kwargs = async_factory_kwargs or {}
-            self.num_procs = int(async_kwargs.get("n_envs", len(envs)))
-        else:
-            self.num_procs = len(envs)
+        self.num_procs = len(envs)
         self.num_steps = self.num_steps_per_proc * self.num_procs
-
-        bridge_shape = (self.num_procs,) + tuple(self.action_space_shape)
-        self.action_bridge = make_action_bridge(device, bridge_shape, fast_action_bridge)
 
         # Initialize experience values
 
@@ -156,7 +146,7 @@ class BaseAlgo(ABC):
                     dist, value = self.model(preprocessed_obs)
             action = dist.sample()
 
-            obs, reward, done, info = self.env.step(self.action_bridge.to_env_actions(action))
+            obs, reward, done, info = self.env.step(action.cpu().numpy())
 
             # Update experiences values
 
@@ -273,8 +263,7 @@ class BaseAlgoLag(ABC):
     """The base class for RCO algorithms."""
 
     def __init__(self, envs, model, device, num_steps_per_proc, discount, lr, gae_lambda, entropy_coef,
-                 value_loss_coef, max_grad_norm, preprocess_obss, recurrence=1, parallel=False,
-                 vec_backend="list", fast_action_bridge=False, async_factory_kwargs=None):
+                 value_loss_coef, max_grad_norm, preprocess_obss, recurrence=1, parallel=False):
         """
         Initializes a `BaseAlgo` instance.
 
@@ -312,7 +301,7 @@ class BaseAlgoLag(ABC):
         # Store parameters
 
         self.propositions = envs[0].get_propositions()
-        self.env = build_env_runner(envs, parallel, vec_backend, async_factory_kwargs)
+        self.env = ParallelEnv(envs) if parallel else SyncEnv(envs)
         self.model = model
         self.device = device
         self.num_steps_per_proc = num_steps_per_proc
@@ -340,15 +329,8 @@ class BaseAlgoLag(ABC):
 
         # Store helpers values
 
-        if vec_backend == "safety_async":
-            async_kwargs = async_factory_kwargs or {}
-            self.num_procs = int(async_kwargs.get("n_envs", len(envs)))
-        else:
-            self.num_procs = len(envs)
+        self.num_procs = len(envs)
         self.num_steps = self.num_steps_per_proc * self.num_procs
-
-        bridge_shape = (self.num_procs,) + tuple(self.action_space_shape)
-        self.action_bridge = make_action_bridge(device, bridge_shape, fast_action_bridge)
 
         # Initialize experience values
 
@@ -421,7 +403,7 @@ class BaseAlgoLag(ABC):
                 dist, value, cost_value = self.model(preprocessed_obs)
             action = dist.sample()
 
-            obs, reward, done, info = self.env.step(self.action_bridge.to_env_actions(action))
+            obs, reward, done, info = self.env.step(action.cpu().numpy())
             reward_cost = np.array(reward) # reward is a tuple that contains reward and cost
             reward = reward_cost[:, 0]
             cost = reward_cost[:, 1]

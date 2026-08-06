@@ -6,7 +6,7 @@ import torch
 from torch import nn
 
 import preprocessing
-from deploy.feature_recipe import sar_preprocess_for_deploy
+from envs.sar_features import sar_preprocess_for_deploy
 from ltl.automata import LDBA, LDBASequence, LDBATransition
 
 

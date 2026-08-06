@@ -1,5 +1,5 @@
 import argparse
-from typing import Any, Optional
+from typing import Optional
 
 import gymnasium
 import simple_parsing
@@ -27,8 +27,7 @@ from utils.logging.wandb_logger import WandbLogger
 from utils.model_store import ModelStore
 from envs.seq_wrapper import sar_task
 from utils.deploy_meta import build_deploy_meta, load_deploy_meta, FEAT_RECIPE_ZONE_COMPAT
-from deploy.feature_recipe import infer_feat_recipe
-from envs.vec.oom_guard import apply_oom_guardrails
+from envs.sar_features import infer_feat_recipe
 from config import *
 
 
@@ -39,11 +38,6 @@ class Trainer:
         self.model_store = ModelStore.from_config(args)
 
     def train(self, log_csv: bool = True, log_wandb: bool = False):
-        apply_oom_guardrails(
-            self.args.experiment,
-            algo_config=self.args.rco,
-            log=lambda msg: self.text_logger.important_info(msg),
-        )
         training_status, resuming = self.get_training_status()
         envs = self.make_envs(training_status["curriculum_stage"])
         if resuming:
@@ -52,11 +46,6 @@ class Trainer:
             preprocessing.init_vocab(get_env_attr(envs[0], 'get_possible_assignments')())
             self.model_store.save_vocab()
         deploy_meta = load_deploy_meta(self.model_store.path) if resuming else None
-        if deploy_meta is not None and deploy_meta.get("use_subgoal_one_hot") != self.args.one_hot:
-            raise ValueError(
-                f"--one-hot={self.args.one_hot} does not match saved deploy_meta "
-                f"(use_subgoal_one_hot={deploy_meta.get('use_subgoal_one_hot')})."
-            )
         if deploy_meta is not None and deploy_meta.get("entr_bldg_obs", False) != self.args.entr_bldg_obs:
             raise ValueError(
                 f"--entr-bldg-obs={self.args.entr_bldg_obs} does not match saved deploy_meta "
@@ -74,21 +63,14 @@ class Trainer:
             training_status,
             model_configs[self.args.model_config],
             deploy_meta=deploy_meta,
-            use_subgoal_one_hot=self.args.one_hot,
             num_propositions=num_propositions,
         )
         model.to(self.args.experiment.device)
         print(model)
-        async_kwargs = None
-        if self.args.experiment.vec_backend == "safety_async":
-            async_kwargs = self.async_factory_kwargs(training_status["curriculum_stage"])
         algo = torch_ac.RCO(
             envs, model, self.args.experiment.device, self.args.rco,
             preprocess_obss=preprocessing.preprocess_obss,
             parallel=self.args.experiment.parallel,
-            vec_backend=self.args.experiment.vec_backend,
-            fast_action_bridge=self.args.experiment.fast_action_bridge,
-            async_factory_kwargs=async_kwargs,
         )
         if "optimizer_state" in training_status:
             algo.optimizer.load_state_dict(training_status["optimizer_state"])
@@ -101,8 +83,7 @@ class Trainer:
         )
         self.text_logger.info(
             f"Rollout: steps_per_process={self.args.rco.steps_per_process} × "
-            f"num_procs={self.args.experiment.num_procs} = {rollout} frames/update "
-            f"(vec_backend={self.args.experiment.vec_backend})"
+            f"num_procs={self.args.experiment.num_procs} = {rollout} frames/update"
         )
         self.text_logger.info(f'Num parameters: {torch_utils.get_number_of_params(model)}')
         num_steps = training_status["num_steps"]
@@ -156,10 +137,9 @@ class Trainer:
         actor_input_dim = int(model.actor.enc[0].in_features)
         use_env_net = model.env_net is not None
         num_props = len(get_env_attr(env, 'get_propositions')())
-        subgoal_dim = 2 * num_props if getattr(model, "use_subgoal_one_hot", False) else 0
         raw_feature_dim = (
             int(model.env_net.mlp[0].in_features) if use_env_net
-            else actor_input_dim - subgoal_dim
+            else actor_input_dim
         )
         lidar_bins = sar_task(env).lidar_conf.num_bins
         recipe = (
@@ -172,7 +152,6 @@ class Trainer:
             use_env_net=use_env_net,
             actor_input_dim=actor_input_dim,
             feat_recipe=recipe,
-            use_subgoal_one_hot=self.args.one_hot,
             entr_bldg_obs=False if self.args.zone_compat else self.args.entr_bldg_obs,
             num_propositions=num_props,
         )
@@ -194,34 +173,10 @@ class Trainer:
             zone_compat=self.args.zone_compat,
         )
 
-    def async_factory_kwargs(self, curriculum_stage: int) -> dict[str, Any]:
-        return {
-            "n_envs": self.args.experiment.num_procs,
-            "env_name": self.args.experiment.env,
-            "curriculum_name": self.args.curriculum,
-            "curriculum_stage": curriculum_stage,
-            "seed": self.args.experiment.seed,
-            "max_steps": 2500,
-            "sar_env_backend": self.args.experiment.sar_env_backend,
-            "safety": True,
-            "sequence": True,
-            "entr_bldg_obs": False if self.args.zone_compat else self.args.entr_bldg_obs,
-            "zone_compat": self.args.zone_compat,
-        }
-
     def make_envs(self, curriculum_stage: int) -> list[gymnasium.Env]:
         utils.set_seed(self.args.experiment.seed)
-        if self.args.experiment.vec_backend == "safety_async":
-            env = self.make_probe_env(curriculum_stage)
-            seed_offset = 100 * self.args.experiment.seed
-            env.reset(seed=seed_offset)
-            self.text_logger.info(
-                f"Async vec backend: probe env on main; {self.args.experiment.num_procs} workers in subprocesses."
-            )
-            return [env]
-
         envs = []
-        for i in range(self.args.experiment.num_procs):
+        for _ in range(self.args.experiment.num_procs):
             envs.append(self.make_probe_env(curriculum_stage))
         seed_offset = 100 * self.args.experiment.seed
         seeds = [seed_offset + i for i in range(self.args.experiment.num_procs)]
@@ -290,12 +245,6 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--log_csv", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--log_wandb", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument('--save', action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument(
-        '--one-hot',
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help='Concat current reach/avoid one-hot to env_net embedding (RCO subgoal conditioning).',
-    )
     parser.add_argument(
         '--cost-clipping',
         action=argparse.BooleanOptionalAction,
