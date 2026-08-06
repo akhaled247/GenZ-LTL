@@ -14,6 +14,37 @@ SAR_AGENT_OBS_KEYS = [
     "magnetometer_0", "wall_sensor_0",
 ]
 ZONES_SAFETY_FEAT_DIM = 48
+_WALLS_PROPS = frozenset({"walls", "any_walls"})
+
+
+def assignment_hits_labels(
+    live: FrozenAssignment,
+    labels: frozenset[FrozenAssignment] | set[FrozenAssignment],
+) -> bool:
+    """True if live matches a label exactly, or any label's true props ⊆ live true props.
+
+    Curriculum avoid uses ``Assignment.single_proposition`` per atom. When the env
+    emits both ``walls`` and ``any_walls``, exact equality misses; subset catch
+    still counts a wall avoid hit.
+    """
+    if live in labels:
+        return True
+    live_true = live.get_true_propositions()
+    if not live_true:
+        return False
+    for label in labels:
+        label_true = label.get_true_propositions()
+        if label_true and label_true <= live_true:
+            return True
+    return False
+
+
+def avoid_forbids_walls(avoid: frozenset[FrozenAssignment] | set[FrozenAssignment]) -> bool:
+    """True if any avoid label is a walls / any_walls atom."""
+    for label in avoid:
+        if label.get_true_propositions() & _WALLS_PROPS:
+            return True
+    return False
 
 
 def sar_feat_dim(
@@ -283,11 +314,11 @@ class SequenceWrapper(gymnasium.Wrapper):
         reach, avoid = self.goal_seq[self.num_reached]
         active_props = info['propositions']
         assignment = Assignment({p: (p in active_props) for p in self.propositions}).to_frozen()
-        if assignment in avoid:
+        if assignment_hits_labels(assignment, avoid):
             reward = -1.
             info['violation'] = True
             terminated = True
-        elif reach != LDBASequence.EPSILON and assignment in reach:
+        elif reach != LDBASequence.EPSILON and assignment_hits_labels(assignment, reach):
             self.num_reached += 1
             terminated = self.num_reached >= len(self.goal_seq)
             if terminated:
@@ -394,17 +425,22 @@ class SequenceSafetyWrapper(gymnasium.Wrapper):
         assignment = Assignment({p: (p in active_props) for p in self.propositions}).to_frozen()
         
         reward = 0.0; cost = -1.0; terminated = False
-        if assignment in avoid:
+        if assignment_hits_labels(assignment, avoid):
             cost = 1.0; info['violation'] = True
             terminated = True
-        elif assignment in reach:
+        elif assignment_hits_labels(assignment, reach):
             reward = 1.0; info['success'] = True
             self.goal_seq = self.unwrapped.sample_sequence(assignment)
             reach, avoid = self.goal_seq[self.num_reached]
         elif 'cost_ltl_walls' in info and info['cost_ltl_walls'] > 0:
             cost = 1.0; terminated = True
+            if avoid_forbids_walls(avoid):
+                info['violation'] = True
         elif info.get('cost', 0) > 0:
+            # SAR WC: ``cost_walls`` → info['cost'] (not cost_ltl_walls).
             cost = 1.0; terminated = True
+            if avoid_forbids_walls(avoid):
+                info['violation'] = True
 
         builder = find_builder(self.env)
         if builder is not None and getattr(builder, "terminated", False):
