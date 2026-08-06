@@ -15,6 +15,165 @@ class NoPathsException(Exception):
     pass
 
 
+WALLS_PROP = "walls"
+ANY_WALLS = "any_walls"
+_WALLS_PROPS = frozenset({WALLS_PROP, ANY_WALLS})
+
+
+def _is_walls_prop(name: str) -> bool:
+    return name in _WALLS_PROPS
+
+
+def _is_surface_prop(name: str) -> bool:
+    return name == "all_surface" or name == "any_surface" or name.startswith("surface_")
+
+
+def _is_entrapped_prop(name: str) -> bool:
+    return name == "all_entrapped" or name.startswith("entrapped_")
+
+
+def _assignment_true_props(assignment: FrozenAssignment) -> set[str]:
+    return set(assignment.get_true_propositions())
+
+
+def _reach_true_props(reach) -> set[str]:
+    if reach == LDBASequence.EPSILON:
+        return set()
+    props: set[str] = set()
+    for assignment in reach:
+        props |= _assignment_true_props(assignment)
+    return props
+
+
+def _avoid_true_props(avoid: frozenset[FrozenAssignment]) -> set[str]:
+    props: set[str] = set()
+    for assignment in avoid:
+        props |= _assignment_true_props(assignment)
+    return props
+
+
+def _expand_avoid_singles(
+    avoid: frozenset[FrozenAssignment],
+    propositions,
+) -> frozenset[FrozenAssignment]:
+    props = set(propositions) if not isinstance(propositions, set) else propositions
+    cleaned: list[FrozenAssignment] = []
+    seen: set[str] = set()
+    for a in avoid:
+        for p in _assignment_true_props(a):
+            if _is_walls_prop(p):
+                continue
+            if p not in seen:
+                seen.add(p)
+                cleaned.append(Assignment.single_proposition(p, props).to_frozen())
+    if ANY_WALLS in props:
+        cleaned.append(Assignment.single_proposition(ANY_WALLS, props).to_frozen())
+    elif WALLS_PROP in props:
+        cleaned.append(Assignment.single_proposition(WALLS_PROP, props).to_frozen())
+    return frozenset(cleaned)
+
+
+def sanitize_reach_avoid_walls(
+    reach_assignment: FrozenAssignment,
+    avoid: frozenset[FrozenAssignment],
+    propositions,
+) -> tuple[frozenset[FrozenAssignment], frozenset[FrozenAssignment]] | None:
+    """Strip ``walls`` from reach; always place it in avoid when in the alphabet.
+
+    Also drops any reach prop that appears in avoid (e.g. surface in both).
+    """
+    props = set(propositions) if not isinstance(propositions, set) else propositions
+    new_avoid = avoid # _expand_avoid_singles(avoid, props)
+    avoid_props = _avoid_true_props(new_avoid)
+    reach_props = [
+        name for name, truth in reach_assignment
+        if truth and not _is_walls_prop(name) and name not in avoid_props
+    ]
+    if not reach_props:
+        return None
+    new_reach = frozenset(
+        Assignment.single_proposition(p, props).to_frozen() for p in reach_props
+    )
+    return new_reach, new_avoid
+
+
+def strip_walls_from_reach_set(
+    reach: frozenset[FrozenAssignment],
+    avoid: frozenset[FrozenAssignment],
+    propositions,
+) -> tuple[frozenset[FrozenAssignment], frozenset[FrozenAssignment]] | None:
+    """Sanitize a frozenset of reach assignments (one Büchi stage)."""
+    props = set(propositions) if not isinstance(propositions, set) else propositions
+    new_avoid = avoid #_expand_avoid_singles(avoid, props)
+    avoid_props = _avoid_true_props(new_avoid)
+    reach_props: list[str] = []
+    for assignment in reach:
+        for name, truth in assignment:
+            if (
+                truth
+                and not _is_walls_prop(name)
+                and name not in avoid_props
+                and name not in reach_props
+            ):
+                reach_props.append(name)
+    if not reach_props:
+        return None
+    new_reach = frozenset(
+        Assignment.single_proposition(p, props).to_frozen() for p in reach_props
+    )
+    return new_reach, new_avoid
+
+
+def sequence_has_reach_avoid_conflict(seq: LDBASequence) -> bool:
+    """True if any stage puts the same prop in both reach and avoid."""
+    for reach, avoid in seq:
+        if reach == LDBASequence.EPSILON:
+            continue
+        if _reach_true_props(reach) & _avoid_true_props(avoid):
+            return True
+    return False
+
+
+def sequence_has_surface_before_entrapped(seq: LDBASequence) -> bool:
+    """True if a surface reach stage appears before an entrapped reach stage.
+
+    Matches ``!surface U entrapped``. Allows surface-only sequences (valid after
+    Until is already satisfied in the LDBA state).
+    """
+    surface_idxs: list[int] = []
+    entrapped_idxs: list[int] = []
+    for i, (reach, _avoid) in enumerate(seq):
+        props = _reach_true_props(reach)
+        if any(_is_surface_prop(p) for p in props):
+            surface_idxs.append(i)
+        if any(_is_entrapped_prop(p) for p in props):
+            entrapped_idxs.append(i)
+    if surface_idxs and entrapped_idxs and min(surface_idxs) < min(entrapped_idxs):
+        return True
+    return False
+
+
+def sanitize_ldba_sequence_walls(seq: LDBASequence, propositions) -> LDBASequence | None:
+    """Apply walls/reach sanitization to every stage; drop invalid Until order."""
+    stages: list[tuple[frozenset[FrozenAssignment], frozenset[FrozenAssignment]]] = []
+    for reach, avoid in seq:
+        if reach == LDBASequence.EPSILON:
+            stages.append((reach, avoid))
+            continue
+        sanitized = strip_walls_from_reach_set(reach, avoid, propositions)
+        if sanitized is None:
+            return None
+        stages.append(sanitized)
+    if not stages:
+        return None
+    out = LDBASequence(stages)
+    if sequence_has_reach_avoid_conflict(out):
+        return None
+    if sequence_has_surface_before_entrapped(out):
+        return None
+    return out
+
+
 @dataclass
 class Path:
     reach_avoid: list[tuple[LDBATransition, set[LDBATransition]]]
@@ -171,10 +330,12 @@ class ExhaustiveSearch(SequenceSearch):
 
 
 class ExhaustiveSearchSafety(SequenceSearch):
-    def __init__(self, env, model: nn.Module, propositions, num_loops: int):
-        super().__init__(model, propositions)
+    def __init__(self, env, model: nn.Module, propositions, num_loops: int, device=None):
+        super().__init__(model, propositions, device=device)
         self.env = env
         self.num_loops = num_loops
+        from envs.seq_wrapper import sar_task
+        self.num_agents = getattr(sar_task(env), "agent_num", 1)
 
     def __call__(self, ldba: LDBA, ldba_states: List[int], obs=None) -> LDBASequence:
         seqs = self.all_sequences(ldba, ldba_states, obs, self.num_loops)
@@ -197,20 +358,32 @@ class ExhaustiveSearchSafety(SequenceSearch):
 
             for reach in reach_list:
                 true_props = reach.get_true_propositions()
-                # Check conflicts with avoid set
-                if not any(avoid_set <= true_props for avoid_set in avoid_sets):
-                    new_reach = frozenset(
-                        [Assignment.single_proposition(p[0], self.propositions).to_frozen()
-                        for p in reach if p[1]]
-                    )
-                    new_seq = [(new_reach, new_avoid)] + list(suffix)
-                    processed_seqs.append(LDBASequence(new_seq))
+                # Check conflicts with avoid set (ignore walls co-activation on reach)
+                true_wo_walls = true_props - _WALLS_PROPS
+                if not true_wo_walls:
+                    continue
+                if any(avoid_set <= true_wo_walls for avoid_set in avoid_sets):
+                    continue
+                sanitized = sanitize_reach_avoid_walls(reach, new_avoid, self.propositions)
+                if sanitized is None:
+                    continue
+                new_reach, walls_avoid = sanitized
+                # Keep suffix but strip walls from every later reach stage too.
+                head = LDBASequence([(new_reach, walls_avoid)] + list(suffix))
+                full = sanitize_ldba_sequence_walls(head, self.propositions)
+                if full is None:
+                    continue
+                processed_seqs.append(full)
 
         if not processed_seqs:
             raise NoPathsException()
-            # return None
 
-        return max(processed_seqs, key=lambda s: self.get_value_safety([s[0]], obs))
+        return max(processed_seqs, key=lambda s: self._score_subgoal([s[0]], obs))
+
+    def _score_subgoal(self, subgoal, obs) -> float:
+        if hasattr(self.model, "cost_critic"):
+            return self.get_value_safety(subgoal, obs)
+        return self.get_value_sar(subgoal, obs)
 
     def all_sequences(self, ldba: LDBA, ldba_states: List[int], obs=None, num_loops=1) -> List[LDBASequence]:
         num_loops = 0 if ldba.is_finite_specification() else num_loops

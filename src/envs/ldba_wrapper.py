@@ -7,6 +7,13 @@ from gymnasium.core import WrapperObsType, WrapperActType
 from gymnasium import spaces
 
 from envs import get_env_attr
+from envs.seq_wrapper import (
+    pre_process_obs_sar,
+    sar_agent_obs_keys,
+    sar_feat_dim,
+    sar_has_walls_lidar,
+    sar_task,
+)
 from ltl.automata import ltl2ldba, LDBA, LDBASequence
 from ltl.logic import Assignment, FrozenAssignment
 
@@ -33,20 +40,56 @@ class LDBAWrapper(gymnasium.Wrapper):
     Wrapper that keeps track of LTL goal satisfaction using an LDBA, which is added to the observation space.
     """
 
-    def __init__(self, env: gymnasium.Env):
+    def __init__(self, env: gymnasium.Env, entr_bldg_obs: bool = False, zone_compat: bool = False):
         super().__init__(env)
+        self.entr_bldg_obs = bool(entr_bldg_obs)
+        self.zone_compat = bool(zone_compat)
+        # Opt-in ablation only; zone_compat keeps walls in avoid features when in avoid set.
+        self.strip_walls_avoid_lidar = False
         
         if "PointLtlSafety" in env.spec.id:
             self.observation_space = spaces.Dict({
                 # 16 dim for agent status, 16 dim for reach, and 16 dim for avoid
                 'features': spaces.Box(-np.inf, np.inf, (48,), dtype=np.float32)
             })
+            self.agent_obs_keys = [
+                "accelerometer", "velocimeter", "gyro", "magnetometer", "wall_sensor",
+            ]
+        elif "SAR" in env.spec.id:
+            task = sar_task(env)
+            num_agents = getattr(task, "agent_num", 1)
+            inner = env.env
+            flat = getattr(inner, "flat", True)
+            self.agent_obs_keys = sar_agent_obs_keys(0)
+            if num_agents <= 1 or flat:
+                feat_dim = sar_feat_dim(
+                    task.lidar_conf.num_bins,
+                    include_walls_lidar=sar_has_walls_lidar(env),
+                    zone_compat=self.zone_compat,
+                )
+                self.observation_space = spaces.Dict({
+                    'features': spaces.Box(-np.inf, np.inf, (feat_dim,), dtype=np.float32),
+                    'goal': self.observation_space['goal'],
+                })
+            else:
+                # MA deploy (flat=False): obs['features'] stays per-agent dict from LTLWrapper;
+                # coordinator builds goal-conditioned vectors via pre_process_obs_sar.
+                self.observation_space = spaces.Dict({
+                    'features': self.observation_space['features'],
+                    'goal': self.observation_space['goal'],
+                })
         elif "LetterSafetyEnv" in env.spec.id:
             obs_dim = env.observation_space['features'].shape[0]
             self.observation_space = spaces.Dict({
                 'features': spaces.Box(0, 1, (obs_dim, obs_dim, 1), dtype=np.float32)
             })
-        self.agent_obs_keys = ["accelerometer", "velocimeter", "gyro", "magnetometer", "wall_sensor"]
+            self.agent_obs_keys = [
+                "accelerometer", "velocimeter", "gyro", "magnetometer", "wall_sensor",
+            ]
+        else:
+            self.agent_obs_keys = [
+                "accelerometer", "velocimeter", "gyro", "magnetometer", "wall_sensor",
+            ]
         self.region_order = env.get_propositions()
         self.terminate_on_acceptance = False
         self.ldba = None
@@ -68,11 +111,31 @@ class LDBAWrapper(gymnasium.Wrapper):
         else:
             return None
 
+    @staticmethod
+    def _wall_constraint_hit(info: dict[str, Any], props: set[str]) -> bool:
+        """True when WC / wall contact ended (or would end) the step."""
+        if "walls" in props or "any_walls" in props:
+            return True
+        if float(info.get("cost", 0) or 0) > 0:
+            return True
+        if float(info.get("cost_ltl_walls", 0) or 0) > 0:
+            return True
+        for value in info.values():
+            if not isinstance(value, dict):
+                continue
+            if float(value.get("cost_walls", 0) or 0) > 0:
+                return True
+            if float(value.get("cost_ltl_walls", 0) or 0) > 0:
+                return True
+        return False
+
     def step(self, action: WrapperActType) -> tuple[WrapperObsType, SupportsFloat, bool, bool, dict[str, Any]]:
         obs, reward, terminated, truncated, info = super().step(action)
 
         # Update trajectory
         props = info['propositions']
+        if isinstance(props, list):
+            props = set(props)
         
         # Update the possible states
         prev_state_indices = [s.state for s in self.states]
@@ -80,7 +143,11 @@ class LDBAWrapper(gymnasium.Wrapper):
         # If the same state can be reached in multiple ways, use the trajectory with the most accepting visits
         new_states = {}
         for state in self.states:
-            for key in self.ldba.get_next_states(state.state, props):
+            try:
+                next_keys = self.ldba.get_next_states(state.state, props)
+            except ValueError:
+                continue
+            for key in next_keys:
                 successor = state.get_successor(*key)
                 # Eliminate the possible states that are violating.
                 if self.ldba.is_state_violating(successor.state):
@@ -99,6 +166,15 @@ class LDBAWrapper(gymnasium.Wrapper):
             # Update the self.states such that the accepting one is the first
             if (i := accepting_indices[0]) != 0:
                 self.states[0], self.states[i] = self.states[i], self.states[0]
+        elif self._wall_constraint_hit(info, props) and not info.get('success'):
+            # WC / walls prop can terminate before Büchi reaches a violating sink
+            # on the same step — count as deploy violation (mirrors goal_met→success).
+            info['violation'] = True
+            terminated = True
+        elif info.get('goal_met') and not info.get('violation'):
+            # SAR mission complete can terminate before finite Büchi reaches an
+            # accepting state on the same step — count as deploy success.
+            info['success'] = True
         
         if prev_state_indices != [s.state for s in self.states]:
             # Note that states are sorted by index
@@ -199,4 +275,37 @@ class LDBAWrapper(gymnasium.Wrapper):
         new_obs[reach_mask] = 1.0
         new_obs[agent_mask] = 0.2
         return new_obs[..., None]
+
+    def pre_process_obs_sar(
+            self,
+            reach: frozenset[FrozenAssignment],
+            avoid: frozenset[FrozenAssignment],
+            agent_idx: int = 0,
+            feat_shape: tuple[int, ...] | None = None,
+            allow_legacy_padding: bool = False,
+            zone_compat: bool | None = None,
+            strip_walls_avoid_lidar: bool | None = None,
+    ) -> np.ndarray:
+        keys = sar_agent_obs_keys(agent_idx)
+        zc = self.zone_compat if zone_compat is None else bool(zone_compat)
+        strip = (
+            self.strip_walls_avoid_lidar
+            if strip_walls_avoid_lidar is None
+            else bool(strip_walls_avoid_lidar)
+        )
+        if feat_shape is None:
+            feat_shape = (
+                sar_feat_dim(
+                    sar_task(self.env).lidar_conf.num_bins,
+                    include_walls_lidar=sar_has_walls_lidar(self.env, agent_idx),
+                    zone_compat=zc,
+                ),
+            )
+        return pre_process_obs_sar(
+            self.env, keys, reach, avoid, feat_shape,
+            agent_idx=agent_idx, allow_legacy_padding=allow_legacy_padding,
+            entr_bldg_obs=self.entr_bldg_obs,
+            zone_compat=zc,
+            strip_walls_avoid_lidar=strip,
+        )
 

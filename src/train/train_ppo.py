@@ -6,6 +6,7 @@ import simple_parsing
 import time
 import datetime
 
+import numpy as np
 import torch
 
 import config
@@ -18,6 +19,7 @@ from envs import make_env, get_env_attr
 
 from sequence.samplers import CurriculumSampler, curricula
 from utils import torch_utils
+from utils.train_device import resolve_training_device
 from utils.logging.file_logger import FileLogger
 from utils.logging.multi_logger import MultiLogger
 from utils.logging.text_logger import TextLogger
@@ -38,20 +40,30 @@ class Trainer:
         if resuming:
             self.model_store.load_vocab()
         else:
-            preprocessing.init_vocab(envs[0].get_possible_assignments())
+            preprocessing.init_vocab(get_env_attr(envs[0], 'get_possible_assignments')())
             self.model_store.save_vocab()
         # pretrained_model = self.load_pretrained_model()
         model = build_model(envs[0], training_status, model_configs[self.args.model_config])
         model.to(self.args.experiment.device)
         print(model.ltl_net)
-        algo = torch_ac.PPO(envs, model, self.args.experiment.device, self.args.ppo,
-                            preprocess_obss=preprocessing.preprocess_obss, parallel=False)
+        algo = torch_ac.PPO(
+            envs, model, self.args.experiment.device, self.args.ppo,
+            preprocess_obss=preprocessing.preprocess_obss,
+            parallel=self.args.experiment.parallel,
+        )
         if "optimizer_state" in training_status:
             algo.optimizer.load_state_dict(training_status["optimizer_state"])
             self.text_logger.info("Loaded optimizer from existing run.")
         logger = self.make_logger(log_csv, log_wandb, resuming)
         logger.log_config()
 
+        rollout = (
+            self.args.ppo.steps_per_process * self.args.experiment.num_procs
+        )
+        self.text_logger.info(
+            f"Rollout: steps_per_process={self.args.ppo.steps_per_process} × "
+            f"num_procs={self.args.experiment.num_procs} = {rollout} frames/update"
+        )
         self.text_logger.info(f'Num parameters: {torch_utils.get_number_of_params(model)}')
         num_steps = training_status["num_steps"]
         num_updates = training_status["num_updates"]
@@ -65,7 +77,15 @@ class Trainer:
             start = time.time()
             exps, logs = algo.collect_experiences()
             curriculum = get_env_attr(envs[0], 'sample_sequence').curriculum
-            curriculum.update_task_success(logs['avg_goal_success'], verbose=True)
+            success_episodes = logs.get('success_per_episode', [])
+            episode_success_rate = (
+                float(np.mean(success_episodes)) if success_episodes else None
+            )
+            curriculum.update_task_success(
+                logs['avg_goal_success'],
+                episode_success_rate=episode_success_rate,
+                verbose=True,
+            )
             update_logs = algo.update_parameters(exps)
             logs.update(update_logs)
             update_time = time.time() - start
@@ -92,16 +112,24 @@ class Trainer:
                 self.text_logger.important_info("Finished curriculum.")
                 break
 
+    def make_probe_env(self, curriculum_stage: int) -> gymnasium.Env:
+        curriculum = curricula[self.args.curriculum]
+        curriculum.stage_index = curriculum_stage
+        self.text_logger.important_info(f"Curriculum stage: {curriculum.stage_index}")
+        sampler = CurriculumSampler.partial(curriculum)
+        return make_env(
+            self.args.experiment.env,
+            sampler,
+            sequence=True,
+            sar_env_backend=self.args.experiment.sar_env_backend,
+            max_steps=2500
+        )
+
     def make_envs(self, curriculum_stage: int) -> list[gymnasium.Env]:
         utils.set_seed(self.args.experiment.seed)
         envs = []
-        for i in range(self.args.experiment.num_procs):
-            curriculum = curricula[self.args.curriculum]
-            curriculum.stage_index = curriculum_stage
-            self.text_logger.important_info(f"Curriculum stage: {curriculum.stage_index}")
-            sampler = CurriculumSampler.partial(curriculum)
-            envs.append(make_env(self.args.experiment.env, sampler, sequence=True))
-        # Set different seeds for each environment. The seed offset is used to ensure that the seeds do not overlap.
+        for _ in range(self.args.experiment.num_procs):
+            envs.append(self.make_probe_env(curriculum_stage))
         seed_offset = 100 * self.args.experiment.seed
         seeds = [seed_offset + i for i in range(self.args.experiment.num_procs)]
         self.text_logger.info(f"Using seeds: {seeds}")
@@ -171,9 +199,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument('--save', action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args()
 
-    if args.experiment.device == 'gpu':
-        assert torch.cuda.is_available(), "CUDA is not available."
-        args.experiment.device = 'cuda'
+    args.experiment.device = resolve_training_device(args.experiment.device)
 
     if args.pretraining_experiment is None and args.freeze_pretrained:
         raise ValueError("Cannot freeze without providing a pretrained model.")

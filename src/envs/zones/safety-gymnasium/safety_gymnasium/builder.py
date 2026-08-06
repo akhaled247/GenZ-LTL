@@ -139,7 +139,7 @@ class Builder(gymnasium.Env, gymnasium.utils.EzPickle):
         self.truncated: bool = False
         self.loaded_fixed_world = False
 
-        self.render_parameters = RenderConf(render_mode, width, height, camera_id, camera_name)
+        self.unwrapped.render_parameters = RenderConf(render_mode, width, height, camera_id, camera_name)
 
     def _setup_simulation(self) -> None:
         """Set up mujoco the simulation instance."""
@@ -287,7 +287,7 @@ class Builder(gymnasium.Env, gymnasium.utils.EzPickle):
         # if self.steps >= self.task.num_steps:
         #    self.truncated = True  # Maximum number of steps in an episode reached
 
-        if self.render_parameters.mode == 'human':
+        if self.unwrapped.render_parameters.mode == 'human':
             self.render()
         return self.task.obs(), reward, cost, self.terminated, self.truncated, info
 
@@ -353,11 +353,11 @@ class Builder(gymnasium.Env, gymnasium.utils.EzPickle):
         - depth_array_list: return a list of frames representing the states of the environment since the last reset.
           Each frame is a numpy.ndarray with shape (x, y), as with `depth_array`.
         """
-        assert self.render_parameters.mode, 'Please specify the render mode when you make env.'
+        assert self.unwrapped.render_parameters.mode, 'Please specify the render mode when you make env.'
         assert (
             not self.task.observe_vision
         ), 'When you use vision envs, you should not call this function explicitly.'
-        return self.task.render(cost=self.cost, **asdict(self.render_parameters))
+        return self.task.render(cost=self.cost, **asdict(self.unwrapped.render_parameters))
 
     @property
     def action_space(self) -> gymnasium.spaces.Box:
@@ -382,4 +382,4 @@ class Builder(gymnasium.Env, gymnasium.utils.EzPickle):
     @property
     def render_mode(self) -> str:
         """The render mode."""
-        return self.render_parameters.mode
+        return self.unwrapped.render_parameters.mode

@@ -4,48 +4,94 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from envs import make_env, make_env_safety
+from envs import make_env
+from envs.env_utils import is_safety_model_env
 from ltl import FixedSampler
-from model.model import build_model, build_model_safety
-from model.agent import Agent
+from model.model import build_model
 from config import model_configs
 from sequence.search import ExhaustiveSearch, ExhaustiveSearchSafety, NoPathsException
 from utils.model_store import ModelStore
+from utils.deploy_meta import MA_EVAL_FORMULA_DEFAULT
 import argparse
+
+from model.agent import Agent
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--env', type=str, choices=['PointLtl2-v0', 'PointLtlSafety2-v0', 'LetterEnv-v0', 'FlatWorld-v0'], default='PointLtl2-v0')
+    parser.add_argument('--env', type=str, default='PointLtl2-v0')
+    parser.add_argument('--train-env', type=str, default=None,
+                        help='Checkpoint env (defaults to --env / --eval-env).')
+    parser.add_argument('--eval-env', type=str, default=None,
+                        help='Rollout env (defaults to --env).')
     parser.add_argument('--exp', type=str, default='deepset')
     parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--num_episodes', type=int, default=100)
-    parser.add_argument('--formula', type=str, default='(F blue) & (!blue U (green & F yellow))')  # !(red | green) U magenta  !blue U (magenta & red)
+    parser.add_argument('--formula', type=str, default='(F blue) & (!blue U (green & F yellow))')
     parser.add_argument('--finite', action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument('--render', action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument('--deterministic', action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        '--zone-compat',
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help='48-d Zone-like SAR features for PointLtlSafety* → SAR transfer eval.',
+    )
     args = parser.parse_args()
-    gamma = 0.94 if args.env == 'LetterEnv-v0' else 0.998 if args.env == 'PointLtl2-v0' or args.env == 'PointLtlSafety2-v0' else 0.98
-    return simulate(args.env, gamma, args.exp, args.seed, args.num_episodes, args.formula, args.finite, args.render, args.deterministic)
+    eval_env = args.eval_env or args.env
+    train_env = args.train_env or eval_env
+    formula = args.formula
+    if args.zone_compat and 'MASAR' in eval_env and formula == '(F blue) & (!blue U (green & F yellow))':
+        formula = MA_EVAL_FORMULA_DEFAULT
+    gamma = 0.94 if eval_env == 'LetterEnv-v0' else 0.998 if eval_env in (
+        'PointLtl2-v0', 'PointLtlSafety2-v0',
+    ) or 'MASAR' in eval_env else 0.98
+    return simulate(
+        eval_env, gamma, args.exp, args.seed, args.num_episodes,
+        formula, args.finite, args.render, args.deterministic,
+        train_env=train_env, zone_compat=args.zone_compat,
+    )
 
 
-def simulate(env, gamma, exp, seed, num_episodes, formula, finite, render, deterministic=True):
+def simulate(
+    env, gamma, exp, seed, num_episodes, formula, finite, render, deterministic=True,
+    *,
+    train_env: str | None = None,
+    zone_compat: bool = False,
+):
     env_name = env
+    train_env = train_env or env_name
     random.seed(seed)
     np.random.seed(seed)
     torch.random.manual_seed(seed)
 
     sampler = FixedSampler.partial(formula)
-    max_steps = None
-    env = make_env_safety(env_name, sampler, max_steps, render_mode='human' if render else None) if "Safety" in env_name \
-        else make_env(env_name, sampler, render_mode='human' if render else None)
-    config = model_configs[env_name]
-    model_store = ModelStore(env_name, exp, seed, None)
-    training_status = model_store.load_training_status(map_location='cpu')
-    model = build_model_safety(env, training_status, config) if "Safety" in env_name \
-        else build_model(env, training_status, config)
-    props = env.get_propositions()
-    search = ExhaustiveSearchSafety(env, model, props, num_loops=2) if "Safety" in env_name \
-        else ExhaustiveSearch(model, props, num_loops=2)
+    use_safety = is_safety_model_env(train_env) or is_safety_model_env(env_name)
+    if use_safety:
+        import sys
+        from pathlib import Path
+
+        _RISE = Path(__file__).resolve().parents[3]
+        sys.path.insert(0, str(_RISE / "RISE-Training"))
+        from rise_training.paths import ensure_genz_paths
+        ensure_genz_paths()
+        from rise_training.genz_deploy.eval_stack import build_sar_ltl_eval_stack
+
+        env, model, search, props, _algo = build_sar_ltl_eval_stack(
+            train_env, exp, seed, formula,
+            eval_env=env_name,
+            flat=True,
+            render_mode='human' if render else None,
+            zone_compat=zone_compat,
+        )
+    else:
+        env = make_env(env_name, sampler, render_mode='human' if render else None)
+        config = model_configs[env_name]
+        model_store = ModelStore(env_name, exp, seed, None)
+        training_status = model_store.load_training_status(map_location='cpu')
+        model = build_model(env, training_status, config)
+        props = env.get_propositions()
+        search = ExhaustiveSearch(model, props, num_loops=2)
     agent = Agent(env, model, search=search, propositions=props, verbose=render)
 
     num_successes = 0
@@ -75,7 +121,6 @@ def simulate(env, gamma, exp, seed, num_episodes, formula, finite, render, deter
                 rets.append(0)
                 break
             action = action.flatten()
-            # if type(action) != int else np.array(action)
             if action.shape == (1,):
                 action = action[0]
             obs, reward, done, info = env.step(action)
@@ -112,7 +157,7 @@ def simulate(env, gamma, exp, seed, num_episodes, formula, finite, render, deter
         success_rate = num_successes / num_episodes
         violation_rate = num_violations / num_episodes
         unreachable_rate = num_unreachable / num_episodes
-        average_steps = np.mean(steps)
+        average_steps = np.mean(steps) if steps else float('nan')
         adr = np.mean(rets)
         print(f'{seed}: {success_rate:.3f},{violation_rate:.3f},{unreachable_rate:.3f},{adr:.3f},{average_steps:.3f}')
         return num_successes, num_violations, average_steps

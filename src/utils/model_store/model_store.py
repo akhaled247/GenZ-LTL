@@ -8,6 +8,7 @@ import torch
 
 import utils
 from preprocessing import VOCAB
+from utils.deploy_meta import save_deploy_meta
 
 
 class ModelStore:
@@ -23,6 +24,13 @@ class ModelStore:
     def from_config(cls, config: argparse.Namespace) -> 'ModelStore':
         exp = config.experiment
         return cls(exp.env, exp.name, exp.seed, config.pretraining_experiment)
+
+    def save_deploy_meta(self, meta: dict[str, any]):
+        save_deploy_meta(self.path, meta)
+
+    def load_deploy_meta(self) -> dict[str, any] | None:
+        from utils.deploy_meta import load_deploy_meta
+        return load_deploy_meta(self.path)
 
     def save_training_status(self, status: dict[str, any]):
         torch.save(status, f'{self.path}/status.pth')

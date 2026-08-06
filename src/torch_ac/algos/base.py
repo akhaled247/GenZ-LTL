@@ -4,11 +4,10 @@ from collections import defaultdict
 import torch
 
 from torch_ac.utils import DictList, ParallelEnv
+from torch_ac.utils.sync_env import SyncEnv
 
 import numpy as np
 from tqdm import trange
-
-from torch_ac.utils.sync_env import SyncEnv
 
 
 class BaseAlgo(ABC):

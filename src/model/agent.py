@@ -2,14 +2,17 @@ import numpy as np
 import torch
 
 import preprocessing
+from envs.sar_features import resolve_feat_shape, sar_preprocess_for_deploy
+from envs.seq_wrapper import sar_task
 from model.model import Model
 from sequence.search import SequenceSearch
+from sequence.search.exhaustive_search import strip_walls_from_reach_set
 from ltl.automata import LDBASequence
 from ltl.logic import Assignment, FrozenAssignment
 
 
 class Agent:
-    def __init__(self, env, model: Model, search: SequenceSearch, propositions: set[str], verbose=False, timeout=None):
+    def __init__(self, env, model: Model, search: SequenceSearch, propositions: set[str], verbose=False, timeout=None, device=None):
         self.env = env
         self.model = model
         self.search = search
@@ -17,8 +20,9 @@ class Agent:
         self.verbose = verbose
         self.sequence = None
         # Timeout mechanism
-        self.timeout = 300 # timeout if timeout else float('inf')
+        self.timeout = float('inf') # timeout if timeout else float('inf')
         self.current_goal_steps = 0
+        self.device = device if device is not None else next(model.parameters()).device
 
     def reset(self):
         self.sequence = None
@@ -55,18 +59,30 @@ class Agent:
         return self.forward(obs, deterministic)
 
     def forward(self, obs, deterministic=False) -> np.ndarray:
-        
-        if self.sequence is not None:
-            reach, avoid = self.sequence[0]
-            if len(obs["features"].shape) == 1:
-                obs["features"] = self.env.pre_process_obs_zones(reach, avoid)
-            else:
-                obs["features"] = self.env.pre_process_obs_letter(reach, avoid)
-        
         if not (isinstance(obs, list) or isinstance(obs, tuple)):
             obs = [obs]
-        preprocessed = preprocessing.preprocess_obss(obs, self.propositions)
+        if self.sequence is not None:
+            reach, avoid = self.sequence[0]
+            stripped = strip_walls_from_reach_set(reach, avoid, self.propositions)
+            if stripped is not None:
+                reach, avoid = stripped
+            feat_shape = resolve_feat_shape(
+                self.model, sar_task(self.env).lidar_conf.num_bins,
+            )
+            for i, o in enumerate(obs):
+                features = o["features"]
+                needs_preprocess = (
+                    not hasattr(features, "shape")
+                    or tuple(features.shape) != feat_shape
+                )
+                if needs_preprocess:
+                    obs[i]["features"] = sar_preprocess_for_deploy(
+                        self.env, self.model, reach, avoid,
+                        agent_idx=getattr(self, "agent_idx", i),
+                    )
+        preprocessed = preprocessing.preprocess_obss(obs, self.propositions, device=self.device)
         with torch.no_grad():
-            dist, _, _ = self.model(preprocessed)
+            out = self.model(preprocessed)
+            dist = out[0]
             action = dist.mode if deterministic else dist.sample()
-        return action.detach().numpy()
+        return action.detach().cpu().numpy()

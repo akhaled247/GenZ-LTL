@@ -16,7 +16,8 @@ class PPO(BaseAlgo):
         num_steps_per_proc = config.steps_per_process
 
         super().__init__(envs, model, device, num_steps_per_proc, config.discount, config.lr, config.gae_lambda,
-                         config.entropy_coef, config.value_loss_coef, config.max_grad_norm, preprocess_obss, parallel=parallel)
+                         config.entropy_coef, config.value_loss_coef, config.max_grad_norm, preprocess_obss,
+                         parallel=parallel)
 
         self.clip_eps = config.clip_eps
         self.epochs = config.epochs

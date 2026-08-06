@@ -19,6 +19,10 @@ env_to_tasks = {
         'GF a & GF b & GF c & G !(e | f | i)',
         'GF c & GF a & GF (e & !f U g) & GF k & G !(i | j)',
     ],
+
+    'PointLTL0MASAR1WC-v0': [
+        'GF (!surface U entrapped) & GF (!entrapped U surface)',
+    ],
 }
 
 

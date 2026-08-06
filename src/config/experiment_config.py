@@ -15,4 +15,5 @@ class ExperimentConfig:
     num_procs: int = 1  # number of processes to use
     device: str = 'cpu'  # device to use for training
     ltl_sampler: str | None = None  # name of the LTL sampler
-
+    parallel: bool = False
+    sar_env_backend: str = "specrl"  # C3: "specrl" | "genz_local"

@@ -6,6 +6,7 @@ import simple_parsing
 import time
 import datetime
 
+import numpy as np
 import torch
 
 import config
@@ -18,11 +19,15 @@ from envs import make_env_safety, get_env_attr
 
 from sequence.samplers import CurriculumSampler, curricula
 from utils import torch_utils
+from utils.train_device import resolve_training_device
 from utils.logging.file_logger import FileLogger
 from utils.logging.multi_logger import MultiLogger
 from utils.logging.text_logger import TextLogger
 from utils.logging.wandb_logger import WandbLogger
 from utils.model_store import ModelStore
+from envs.seq_wrapper import sar_task
+from utils.deploy_meta import build_deploy_meta, load_deploy_meta, FEAT_RECIPE_ZONE_COMPAT
+from envs.sar_features import infer_feat_recipe
 from config import *
 
 
@@ -38,20 +43,48 @@ class Trainer:
         if resuming:
             self.model_store.load_vocab()
         else:
-            preprocessing.init_vocab(envs[0].get_possible_assignments())
+            preprocessing.init_vocab(get_env_attr(envs[0], 'get_possible_assignments')())
             self.model_store.save_vocab()
-        # pretrained_model = self.load_pretrained_model()
-        model = build_model_safety(envs[0], training_status, model_configs[self.args.model_config])
+        deploy_meta = load_deploy_meta(self.model_store.path) if resuming else None
+        if deploy_meta is not None and deploy_meta.get("entr_bldg_obs", False) != self.args.entr_bldg_obs:
+            raise ValueError(
+                f"--entr-bldg-obs={self.args.entr_bldg_obs} does not match saved deploy_meta "
+                f"(entr_bldg_obs={deploy_meta.get('entr_bldg_obs', False)})."
+            )
+        saved_zone = deploy_meta.get("feat_recipe") == "zone_compat" if deploy_meta else False
+        if deploy_meta is not None and saved_zone != bool(self.args.zone_compat):
+            raise ValueError(
+                f"--zone-compat={self.args.zone_compat} does not match saved deploy_meta "
+                f"(feat_recipe={deploy_meta.get('feat_recipe')})."
+            )
+        num_propositions = len(get_env_attr(envs[0], 'get_propositions')())
+        model = build_model_safety(
+            envs[0],
+            training_status,
+            model_configs[self.args.model_config],
+            deploy_meta=deploy_meta,
+            num_propositions=num_propositions,
+        )
         model.to(self.args.experiment.device)
         print(model)
-        algo = torch_ac.RCO(envs, model, self.args.experiment.device, self.args.rco,
-                            preprocess_obss=preprocessing.preprocess_obss, parallel=False)
+        algo = torch_ac.RCO(
+            envs, model, self.args.experiment.device, self.args.rco,
+            preprocess_obss=preprocessing.preprocess_obss,
+            parallel=self.args.experiment.parallel,
+        )
         if "optimizer_state" in training_status:
             algo.optimizer.load_state_dict(training_status["optimizer_state"])
             self.text_logger.info("Loaded optimizer from existing run.")
         logger = self.make_logger(log_csv, log_wandb, resuming)
         logger.log_config()
 
+        rollout = (
+            self.args.rco.steps_per_process * self.args.experiment.num_procs
+        )
+        self.text_logger.info(
+            f"Rollout: steps_per_process={self.args.rco.steps_per_process} × "
+            f"num_procs={self.args.experiment.num_procs} = {rollout} frames/update"
+        )
         self.text_logger.info(f'Num parameters: {torch_utils.get_number_of_params(model)}')
         num_steps = training_status["num_steps"]
         num_updates = training_status["num_updates"]
@@ -65,7 +98,15 @@ class Trainer:
             start = time.time()
             exps, logs = algo.collect_experiences()
             curriculum = get_env_attr(envs[0], 'sample_sequence').curriculum
-            curriculum.update_task_success(logs['avg_goal_success'], verbose=True)
+            success_episodes = logs.get('success_per_episode', [])
+            episode_success_rate = (
+                float(np.mean(success_episodes)) if success_episodes else None
+            )
+            curriculum.update_task_success(
+                logs['avg_goal_success'],
+                episode_success_rate=episode_success_rate,
+                verbose=True,
+            )
             update_logs = algo.update_parameters(exps)
             logs.update(update_logs)
             update_time = time.time() - start
@@ -86,22 +127,57 @@ class Trainer:
                                    "num_eval_steps": num_eval_steps,
                                    }
                 self.model_store.save_training_status(training_status)
+                self.write_deploy_meta(algo.model, envs[0])
                 self.text_logger.info("Saved training status")
             if curriculum.finished:
                 self.text_logger.important_info("Finished curriculum.")
                 break
 
+    def write_deploy_meta(self, model, env) -> None:
+        actor_input_dim = int(model.actor.enc[0].in_features)
+        use_env_net = model.env_net is not None
+        num_props = len(get_env_attr(env, 'get_propositions')())
+        raw_feature_dim = (
+            int(model.env_net.mlp[0].in_features) if use_env_net
+            else actor_input_dim
+        )
+        lidar_bins = sar_task(env).lidar_conf.num_bins
+        recipe = (
+            FEAT_RECIPE_ZONE_COMPAT if self.args.zone_compat
+            else infer_feat_recipe(raw_feature_dim, lidar_bins)
+        )
+        meta = build_deploy_meta(
+            train_env=self.args.experiment.env,
+            raw_feature_dim=raw_feature_dim,
+            use_env_net=use_env_net,
+            actor_input_dim=actor_input_dim,
+            feat_recipe=recipe,
+            entr_bldg_obs=False if self.args.zone_compat else self.args.entr_bldg_obs,
+            num_propositions=num_props,
+        )
+        path = self.model_store.save_deploy_meta(meta)
+        self.text_logger.info(f"Wrote deploy metadata to {path}")
+
+    def make_probe_env(self, curriculum_stage: int) -> gymnasium.Env:
+        curriculum = curricula[self.args.curriculum]
+        curriculum.stage_index = curriculum_stage
+        self.text_logger.important_info(f"Curriculum stage: {curriculum.stage_index}")
+        sampler = CurriculumSampler.partial(curriculum)
+        return make_env_safety(
+            self.args.experiment.env,
+            sampler,
+            sequence=True,
+            sar_env_backend=self.args.experiment.sar_env_backend,
+            max_steps=2500,
+            entr_bldg_obs=False if self.args.zone_compat else self.args.entr_bldg_obs,
+            zone_compat=self.args.zone_compat,
+        )
+
     def make_envs(self, curriculum_stage: int) -> list[gymnasium.Env]:
         utils.set_seed(self.args.experiment.seed)
         envs = []
-        for i in range(self.args.experiment.num_procs):
-            curriculum = curricula[self.args.curriculum]
-            curriculum.stage_index = curriculum_stage
-            curriculum.stage_index = curriculum_stage
-            self.text_logger.important_info(f"Curriculum stage: {curriculum.stage_index}")
-            sampler = CurriculumSampler.partial(curriculum)
-            envs.append(make_env_safety(self.args.experiment.env, sampler, sequence=True))
-        # Set different seeds for each environment. The seed offset is used to ensure that the seeds do not overlap.
+        for _ in range(self.args.experiment.num_procs):
+            envs.append(self.make_probe_env(curriculum_stage))
         seed_offset = 100 * self.args.experiment.seed
         seeds = [seed_offset + i for i in range(self.args.experiment.num_procs)]
         self.text_logger.info(f"Using seeds: {seeds}")
@@ -169,14 +245,37 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--log_csv", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--log_wandb", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument('--save', action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        '--cost-clipping',
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        dest='cost_clipping',
+        help='Clip cost policy surrogate like reward (PPO trust region on cost advantage).',
+    )
+    parser.add_argument(
+        '--entr-bldg-obs',
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        dest='entr_bldg_obs',
+        help='Max-pool building lidar into entrapped reach subgoal lidar slice.',
+    )
+    parser.add_argument(
+        '--zone-compat',
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        dest='zone_compat',
+        help='48-d zones-like SAR features (agent|reach|avoid); max(building,entrapped) on '
+             'entrapped reach; walls lidar goes into avoid features when walls is in avoid.',
+    )
     args = parser.parse_args()
+    args.rco.cost_clipping = args.cost_clipping
 
-    if args.experiment.device == 'gpu':
-        assert torch.cuda.is_available(), "CUDA is not available."
-        args.experiment.device = 'cuda'
+    args.experiment.device = resolve_training_device(args.experiment.device)
 
     if args.pretraining_experiment is None and args.freeze_pretrained:
         raise ValueError("Cannot freeze without providing a pretrained model.")
+    if args.zone_compat and args.entr_bldg_obs:
+        raise ValueError("--zone-compat already pools buildings into entrapped; omit --entr-bldg-obs.")
     return args
 
 

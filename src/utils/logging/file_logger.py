@@ -1,9 +1,13 @@
 import argparse
 import copy
 import csv
-import fcntl
 import json
 import os
+
+try:
+    import fcntl
+except ModuleNotFoundError:  # Windows
+    fcntl = None
 
 import utils
 from config import model_configs
@@ -32,17 +36,21 @@ class FileLogger(Logger):
     def log_config(self):
         config_file = f'{self.log_path}/../experiment_config.json'
         with open(config_file, 'a+') as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
-            f.seek(0, os.SEEK_END)
-            if f.tell() > 0:  # metadata file exists already
-                f.seek(0)
-                previous_config = json.load(f)
-                json_config = json.loads(json.dumps(self.config_as_dict(), cls=JsonEncoder))
-                if previous_config != json_config:
-                    raise ValueError('Previous log with different config exists!')
-            else:
-                json.dump(self.config_as_dict(), f, indent=4, cls=JsonEncoder)
-            fcntl.flock(f, fcntl.LOCK_UN)
+            if fcntl is not None:
+                fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                f.seek(0, os.SEEK_END)
+                if f.tell() > 0:  # metadata file exists already
+                    f.seek(0)
+                    previous_config = json.load(f)
+                    json_config = json.loads(json.dumps(self.config_as_dict(), cls=JsonEncoder))
+                    if previous_config != json_config:
+                        raise ValueError('Previous log with different config exists!')
+                else:
+                    json.dump(self.config_as_dict(), f, indent=4, cls=JsonEncoder)
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(f, fcntl.LOCK_UN)
 
     def config_as_dict(self) -> dict:
         json_config = vars(copy.deepcopy(self.config))

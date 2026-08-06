@@ -15,12 +15,24 @@ def get_env_attr(env, attr: str):
         raise AttributeError(f'Attribute {attr} not found in env.')
 
 
+def find_builder(env: gymnasium.Env):
+    """Walk wrappers to SpecRLBench MA Builder (has ``done`` + ``task``)."""
+    cur: gymnasium.Env | None = env
+    seen: set[int] = set()
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if hasattr(cur, "done") and hasattr(cur, "task") and hasattr(cur, "terminated"):
+            return cur
+        cur = getattr(cur, "env", None)
+    return None
 def make_env(
         name: str,
         sampler: Callable[[list[str]], Callable],
         max_steps: Optional[int] = None,
         render_mode: str | None = None,
-        sequence=False
+        sequence=False,
+        sar_env_backend: str = "specrl",
+        flat: bool = True,
 ):
     from envs.pretraining.pretraining_env import PretrainingEnv
     from envs.seq_wrapper import SequenceWrapper
@@ -35,7 +47,7 @@ def make_env(
         env = PretrainingEnv(propositions, impossible_assignments)
         max_steps = max_steps or 100
     elif is_safety_gym_env(name):
-        env = make_safety_gym_env(name, render_mode)
+        env = make_safety_gym_env(name, render_mode, backend=sar_env_backend, flat=flat)
         max_steps = max_steps or 1000
     elif name.startswith('Letter'):
         env = make_letter_env(name, render_mode)
@@ -49,7 +61,6 @@ def make_env(
     propositions = get_env_attr(env, 'get_propositions')()
     sample_task = sampler(propositions)
     if not sequence:
-        # env = PartiallyOrderedWrapper(env, sample_task)
         env = LTLWrapper(env, sample_task)
         env = LDBAWrapper(env)
     else:
@@ -65,6 +76,10 @@ def make_env_safety(
         max_steps: Optional[int] = None,
         render_mode: str | None = None,
         sequence=False,
+        sar_env_backend: str = "specrl",
+        flat: bool = True,
+        entr_bldg_obs: bool = False,
+        zone_compat: bool = False,
 ):
     from envs.pretraining.pretraining_env import PretrainingEnv
     from envs.seq_wrapper import SequenceSafetyWrapper
@@ -79,7 +94,7 @@ def make_env_safety(
         env = PretrainingEnv(propositions, impossible_assignments)
         max_steps = max_steps or 100
     elif is_safety_gym_env(name):
-        env = make_safety_gym_env(name, render_mode)
+        env = make_safety_gym_env(name, render_mode, backend=sar_env_backend, flat=flat)
         max_steps = max_steps or 1000
     elif name.startswith('Letter'):
         env = make_letter_env(name, render_mode)
@@ -93,11 +108,12 @@ def make_env_safety(
     propositions = get_env_attr(env, 'get_propositions')()
     sample_task = sampler(propositions)
     if not sequence:
-        # env = PartiallyOrderedWrapper(env, sample_task)
         env = LTLWrapper(env, sample_task)
-        env = LDBAWrapper(env)
+        env = LDBAWrapper(env, entr_bldg_obs=entr_bldg_obs, zone_compat=zone_compat)
     else:
-        env = SequenceSafetyWrapper(env, sample_task)
+        env = SequenceSafetyWrapper(
+            env, sample_task, entr_bldg_obs=entr_bldg_obs, zone_compat=zone_compat,
+        )
     env = TimeLimit(env, max_episode_steps=max_steps)
     env = RemoveTruncWrapper(env)
     return env
@@ -107,7 +123,29 @@ def is_safety_gym_env(name: str) -> bool:
     return any([name.startswith(agent_name) for agent_name in ['Point', 'Car', 'Racecar', 'Doggo', 'Ant']])
 
 
-def make_safety_gym_env(name: str, render_mode: str | None = None):
+def is_sar_env(name: str) -> bool:
+    return "SAR" in name
+
+
+def is_safety_model_env(name: str) -> bool:
+    """True when eval/training should use RCO + SequenceSafetyWrapper stack."""
+    if name.startswith("PointLtlSafety") or name == "LetterSafetyEnv-v0":
+        return True
+    if is_sar_env(name) and ("WC" in name or "AC" in name):
+        return True
+    return False
+
+
+def make_safety_gym_env(
+        name: str,
+        render_mode: str | None = None,
+        backend: str = "specrl",
+        flat: bool = True,
+):
+    if "SAR" in name:
+        from envs.sar_factory import make_sar_base_env
+        return make_sar_base_env(name, render_mode=render_mode, backend=backend, flat=flat)
+
     # noinspection PyUnresolvedReferences
     import safety_gymnasium
     from envs.zones.safety_gym_wrapper import SafetyGymWrapper

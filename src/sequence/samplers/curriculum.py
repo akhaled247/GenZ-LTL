@@ -17,10 +17,10 @@ from sequence.samplers.sequence_samplers import sample_reach_avoid, all_reach_av
 @dataclass
 class CurriculumStage(ABC):
     threshold: float | None
-    threshold_type: Literal['mean', 'min'] | None
+    threshold_type: Literal['mean', 'min', 'success_rate'] | None
 
     @abstractmethod
-    def sample(self, propositions: list[str]) -> LDBASequence:
+    def sample(self, propositions: list[str], current=None) -> LDBASequence:
         pass
 
     @abstractmethod
@@ -37,7 +37,7 @@ class ExplicitCurriculumStage(CurriculumStage):
     _tasks: list[LDBASequence] | None = None
     _task_success: dict[LDBASequence, float] | None = None
 
-    def sample(self, propositions: list[str]) -> LDBASequence:
+    def sample(self, propositions: list[str], current=None) -> LDBASequence:
         if self._tasks is None:
             self._tasks = []
             if self.task_fn is not None:
@@ -93,14 +93,19 @@ class EnumerateCurriculumStageZones(CurriculumStage):
     
     def get_all_combinations(self, propositions: list[str]):
         self._tasks, self._sample_prob = [], []
-        for reach in combinations(propositions, 1):
-            remaining = [p for p in propositions if p not in reach]  # Exclude "reach" elements
-            
-            # Choose elements for "avoid" from the remaining regions
+        # ``walls`` is an LTL alphabet symbol for MA eval / avoid, not a reach target.
+        reach_props = [p for p in propositions if p not in ("walls", "any_walls", "any_surface")]
+        for reach in combinations(reach_props, 1):
+            remaining = [p for p in propositions if p not in reach]
             for a_size in range(len(remaining) + 1):
                 for avoid in combinations(remaining, a_size):
-                    reach_assignments = frozenset([Assignment.single_proposition(p, propositions).to_frozen() for p in reach])
-                    avoid_assignments = frozenset([Assignment.single_proposition(p, propositions).to_frozen() for p in avoid])
+                    reach_assignments = frozenset([
+                        Assignment.single_proposition(p, propositions).to_frozen() for p in reach
+                    ])
+                    avoid_list = [
+                        Assignment.single_proposition(p, propositions).to_frozen() for p in avoid
+                    ]
+                    avoid_assignments = frozenset(avoid_list)
                     self._tasks.append(LDBASequence([(reach_assignments, avoid_assignments)]))
                     self._sample_prob.append(1)
         self._sample_prob /= np.sum(self._sample_prob)
@@ -148,7 +153,7 @@ class RandomCurriculumStage(CurriculumStage):
     """A curriculum stage in which tasks are sampled randomly."""
     sampler: Callable[[list[str]], LDBASequence]
 
-    def sample(self, propositions: list[str]) -> LDBASequence:
+    def sample(self, propositions: list[str], current=None) -> LDBASequence:
         return self.sampler(propositions)
 
     def update_task_success(self, task_success: dict[LDBASequence, float]) -> None:
@@ -161,9 +166,9 @@ class MultiRandomStage(CurriculumStage):
     stages: list[RandomCurriculumStage]
     probs: list[float]
 
-    def sample(self, propositions: list[str]) -> LDBASequence:
+    def sample(self, propositions: list[str], current=None) -> LDBASequence:
         stage = np.random.choice(self.stages, p=self.probs)
-        return stage.sample(propositions)
+        return stage.sample(propositions, current)
 
     def update_task_success(self, task_success: dict[LDBASequence, float]) -> None:
         pass
@@ -188,14 +193,37 @@ class Curriculum:
     def sample(self, propositions: list[str], current: str = None) -> LDBASequence:
         return self.current_stage.sample(propositions, current)
 
-    def update_task_success(self, task_success: dict[LDBASequence, float], verbose=False) -> None:
+    def update_task_success(
+        self,
+        task_success: dict[LDBASequence, float],
+        episode_success_rate: float | None = None,
+        verbose: bool = False,
+    ) -> None:
         if self.current_stage.threshold is None:
             return
-        self.num_updates += 1
-        self.num_updates %= 100
-        self.current_stage.update_task_success(task_success)
-        aggr = np.mean if self.current_stage.threshold_type == 'mean' else np.min
-        if aggr(list(task_success.values())) >= self.current_stage.threshold:
+
+        if self.current_stage.threshold_type == 'success_rate':
+            if task_success:
+                self.num_updates += 1
+                self.num_updates %= 100
+                self.current_stage.update_task_success(task_success)
+            if episode_success_rate is None:
+                return
+            passed = episode_success_rate >= self.current_stage.threshold
+            metric_label = 'Pμ'
+            metric_value = episode_success_rate
+        else:
+            if not task_success:
+                return
+            self.num_updates += 1
+            self.num_updates %= 100
+            self.current_stage.update_task_success(task_success)
+            aggr = np.mean if self.current_stage.threshold_type == 'mean' else np.min
+            metric_value = aggr(list(task_success.values()))
+            passed = metric_value >= self.current_stage.threshold
+            metric_label = 'MEAN' if self.current_stage.threshold_type == 'mean' else 'MIN'
+
+        if passed:
             if verbose:
                 print('=' * 80)
                 print(f"Stage {self.stage_index} completed.")
@@ -204,7 +232,7 @@ class Curriculum:
         else:
             if verbose and self.num_updates % 100 == 0:
                 print(f"Stage {self.stage_index} not completed.")
-                print(f'MEAN: {np.mean(list(task_success.values()))}, THRESHOLD: {self.current_stage.threshold}')
+                print(f'{metric_label}: {metric_value}, THRESHOLD: {self.current_stage.threshold}')
 
 
 LETTER_CURRICULUM = Curriculum([
@@ -343,4 +371,11 @@ FLATWORLD_CURRICULUM = Curriculum([
         threshold=None,
         threshold_type=None
     ),
+])
+
+# Pμ for RCO is per subgoal segment in the log window, not full LTL sequence success.
+SAR_SAFETY_CURRICULUM = Curriculum([
+    EnumerateCurriculumStageZones(
+        threshold=0.95,
+        threshold_type='min'),
 ])

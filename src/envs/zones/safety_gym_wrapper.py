@@ -16,9 +16,9 @@ class SafetyGymWrapper(gymnasium.Wrapper):
 
     def __init__(self, env: Any, wall_sensor=True):
         super().__init__(env)
-        self.render_parameters.camera_name = 'track'
-        self.render_parameters.width = 256
-        self.render_parameters.height = 256
+        self.unwrapped.render_parameters.camera_name = 'track'
+        self.unwrapped.render_parameters.width = 256
+        self.unwrapped.render_parameters.height = 256
         self.num_lidar_bins = env.unwrapped.task.lidar_conf.num_bins
         obs_keys = env.observation_space.spaces.keys()
         self.colors = set()

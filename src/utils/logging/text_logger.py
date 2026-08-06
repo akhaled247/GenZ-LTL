@@ -34,21 +34,21 @@ class TextLogger(Logger):
     @staticmethod
     def get_short_name(key: str) -> str:
         if key == 'return_per_episode_mean':
-            return 'rμ'
+            return 'r_mu'
         elif key == 'return_per_episode_std':
-            return 'rσ'
+            return 'r_std'
         elif key == 'num_steps_per_episode_mean':
-            return 'sμ'
+            return 's_mu'
         elif key == 'num_steps_per_episode_std':
-            return 'sσ'
+            return 's_std'
         elif key == 'success_per_episode_mean':
-            return 'Pμ'
+            return 'P_mu'
         elif key == 'success_per_episode_std':
-            return 'Pσ'
+            return 'P_std'
         elif key == 'violation_per_episode_mean':
-            return 'Vμ'
+            return 'V_mu'
         elif key == 'violation_per_episode_std':
-            return 'Vσ'
+            return 'V_std'
         elif key == 'duration':
             return 't'
         else:

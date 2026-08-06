@@ -18,9 +18,11 @@ class RCO(BaseAlgoLag):
         num_steps_per_proc = config.steps_per_process
 
         super().__init__(envs, model, device, num_steps_per_proc, config.discount, config.lr, config.gae_lambda,
-                         config.entropy_coef, config.value_loss_coef, config.max_grad_norm, preprocess_obss, parallel=parallel)
+                         config.entropy_coef, config.value_loss_coef, config.max_grad_norm, preprocess_obss,
+                         parallel=parallel)
 
         self.clip_eps = config.clip_eps
+        self.cost_clipping = getattr(config, 'cost_clipping', False)
         self.epochs = config.epochs
         self.batch_size = config.batch_size
         self.target_kl = config.target_kl
@@ -35,7 +37,8 @@ class RCO(BaseAlgoLag):
         
         self.batch_num = 0
         
-        print(f"target_cost = {self.target_cost}, min_lag = {self.min_lag}, max_lag = {self.max_lag}")
+        print(f"target_cost = {self.target_cost}, min_lag = {self.min_lag}, max_lag = {self.max_lag}, "
+              f"cost_clipping = {self.cost_clipping}")
 
         
     def update_parameters(self, exps):
@@ -78,7 +81,12 @@ class RCO(BaseAlgoLag):
                 reward_surr2 = torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * sb.advantage
                 policy_loss_reward = torch.min(reward_surr1, reward_surr2)
                 
-                policy_loss_cost = ratio * sb.cost_advantage
+                if self.cost_clipping:
+                    cost_surr1 = ratio * sb.cost_advantage
+                    cost_surr2 = torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * sb.cost_advantage
+                    policy_loss_cost = torch.min(cost_surr1, cost_surr2)
+                else:
+                    policy_loss_cost = ratio * sb.cost_advantage
                 lag = torch.clamp(lag, self.min_lag, self.max_lag)
                 
                 policy_loss = (-policy_loss_reward + \
